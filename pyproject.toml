@@ -1,0 +1,37 @@
+[project]
+name = "cabench"
+version = "0.1.0"
+description = "Change-aware efficient benchmarking of language models (ELEC6200 GDP Group 7)"
+readme = "README.md"
+authors = [
+    { name = "Alex-Sebastian Ene", email = "ase1g23@soton.ac.uk" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+cabench = "cabench.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
