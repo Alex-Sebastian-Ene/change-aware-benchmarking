@@ -26,6 +26,13 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
+matrix = [
+    "datasets>=5.1.0",
+    "huggingface-hub>=2.2.0",
+    "pyarrow>=26.0.0",
+    "pyyaml>=6.0.3",
+    "transformers>=5.20.1",
+]
 
 [tool.ruff]
 line-length = 100
