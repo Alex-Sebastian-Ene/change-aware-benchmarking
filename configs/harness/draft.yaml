@@ -1,0 +1,18 @@
+harness:
+  lm_eval_repo: https://github.com/huggingface/lm-evaluation-harness
+  lm_eval_sha: e5a9872c7f6e43057958dc3d3ecdccb3bb51fba0
+  vllm_version: <e.g. 0.6.3>
+  dtype: bfloat16
+  batch_size: 32
+  apply_chat_template: false
+  lockfile_sha256: <sha256 of uv.lock>
+  apptainer_digest: <sha256 of the .sif>
+
+tasks:
+  - name: leaderboard_mmlu_pro_pinned
+    yaml_version: "0.1"
+    dataset_repo: TIGER-Lab/MMLU-Pro
+    dataset_sha: 510f79e14b00e56dc7d226e6c80279aaca699ad3
+    num_fewshot: 5
+    fewshot_seed: 1234
+    max_gen_toks: null
