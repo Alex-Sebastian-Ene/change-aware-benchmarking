@@ -2,8 +2,9 @@
 
     uv run python scripts/check_schema.py [tables_dir] [--configs configs/harness]
 
-tables_dir defaults to data/processed. Exit code 0 = all checks pass, 1 = a check
-failed, 2 = the tables or configs couldn't be read. Layout: cabench/schema_check.py.
+tables_dir is the data store root scripts/matrix writes to (long/, items.parquet,
+models.parquet) and defaults to data/processed. Exit code 0 = all checks pass, 1 = a
+check failed, 2 = the tables or configs couldn't be read. Layout: cabench/schema_check.py.
 """
 
 import argparse
@@ -29,9 +30,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     configs, config_errors = load_configs(args.configs)
 
-    responses = tables["responses"]
+    long = tables["long"]
     print(
-        f"{args.tables_dir}: {len(responses)} rows, {responses['run_id'].nunique()} runs, "
+        f"{args.tables_dir}: {len(long)} rows, {long['run_id'].nunique()} runs, "
         f"{len(tables['models'])} models, {len(tables['items'])} items, {len(configs)} configs"
     )
     results = run_checks(tables, configs, config_errors)

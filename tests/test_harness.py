@@ -1,6 +1,8 @@
 """Tests for the pinned harness (no GPU or lm-eval needed)."""
 
+import importlib.util
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -102,6 +104,34 @@ def test_expected_filename_replaces_old_hash(tmp_path):
     path = write_config(tmp_path, name="base")
     assert expected_filename(path) == path.name
     assert path.name.count("-") == 1
+
+
+@pytest.mark.parametrize(
+    "name, benchmark, expected",
+    [
+        ("leaderboard_mmlu_pro_pinned", None, "leaderboard_mmlu_pro"),
+        ("arc_easy", None, "arc_easy"),
+        ("arc_easy_pinned", "ai2_arc_easy", "ai2_arc_easy"),
+    ],
+)
+def test_task_benchmark(name, benchmark, expected):
+    assert TaskPin(**{**TASK.__dict__, "name": name, "benchmark": benchmark}).benchmark == expected
+
+
+def test_matrix_config_id_matches_pins(tmp_path):
+    """scripts/matrix/utils/config.py must give the IDs the harness and schema check use."""
+    spec = importlib.util.spec_from_file_location(
+        "matrix_config", Path(__file__).parents[1] / "scripts/matrix/utils/config.py"
+    )
+    matrix_config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(matrix_config)
+
+    path = write_config(tmp_path)
+    assert matrix_config.config_id(path) == load_config(path).config_id
+    assert matrix_config.load_config(path)["_config_id"] == load_config(path).config_id
+    path.write_text(path.read_text().replace("25", "5"))
+    with pytest.raises(ConfigError, match="edited in place"):
+        matrix_config.load_config(path)
 
 
 @pytest.mark.parametrize(

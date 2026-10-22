@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 ID_LEN = 12
+PINNED_SUFFIX = "_pinned"  # configs/tasks overrides are named <upstream task>_pinned
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,13 @@ class TaskPin:
     parser_version: str | None = None  # generative tasks only
     template_path: str | None = None  # None = task default at pinned commit
     template_sha256: str | None = None
+    # `benchmark` in the long/items tables and the item_id hash, shared with public runs.
+    # None = name without the _pinned suffix.
+    benchmark: str | None = None
+
+    def __post_init__(self):
+        if self.benchmark is None:
+            object.__setattr__(self, "benchmark", self.name.removesuffix(PINNED_SUFFIX))
 
 
 @dataclass(frozen=True)
