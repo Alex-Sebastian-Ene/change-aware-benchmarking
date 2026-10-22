@@ -33,3 +33,15 @@ uv run --group irt pytest
 
 Notebooks `notebooks/irt_01_inspect_data`, `irt_02_fit_mirt` and `irt_03_results` look at the
 matrix, a single MIRT fit, and the experiment results.
+
+## Minimal IRT baseline
+`notebooks/irt_04_baseline` is the reference point for later IRT changes. It uses a 1-D 2PL model.
+It checks that the fit is sound (convergence, parameter sanity, held-out answer prediction,
+calibration), then evaluates score estimation on test and saves `results/irt/baseline.csv`.
+
+The protocol lives in `protocol.py`:
+- **Methods** are (selector, estimator) pairs registered in `SELECTORS` / `ESTIMATORS`.
+- **`evaluate`** runs any list of methods on the same splits, k values and seeds as the baseline.
+
+A new method (for example information- or cost-aware selection) is one new function plus one
+dictionary entry.
