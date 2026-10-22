@@ -246,6 +246,7 @@ def test_read_tables_missing_column(tmp_path, configs):
 
 def test_read_tables_matrix_store_layout(tmp_path, configs):
     """long/<benchmark>/<run_id>.parquet + items/models.parquet, as scripts/matrix writes."""
+    pytest.importorskip("pyarrow")  # parquet support comes with `uv sync --group matrix`
     t = make_tables(configs)
     add_public_run(t, ARC)
     store = tmp_path / "data"

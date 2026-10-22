@@ -80,7 +80,7 @@ uv run --group matrix python scripts/matrix/download_details.py Qwen/Qwen2.5-0.5
 uv run --group matrix python scripts/matrix/ingest_public.py $RAW/Qwen__Qwen2.5-0.5B     --data $DATA
 uv run --group matrix python scripts/matrix/ingest_public.py $RAW/meta-llama__Llama-3.2-1B --data $DATA
 uv run --group matrix python scripts/matrix/build_tables.py --data $DATA --raw $RAW
-uv run python scripts/check_schema.py $DATA
+uv run --group matrix python scripts/check_schema.py $DATA
 ```
 
 `scripts/check_schema.py` is the batch schema check (no duplicate keys, row
