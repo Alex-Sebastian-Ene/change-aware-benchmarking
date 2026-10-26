@@ -4,14 +4,24 @@ Core objective 3. Owners: A. Vijaykrishnan, A. Chitnis.
 
 Multidimensional 2PL IRT: P(Y_mi = 1) = sigmoid(theta_m . alpha_i - beta_i), fitted by
 L2-regularised maximum likelihood (not the hierarchical Bayesian VI used by tinyBenchmarks).
-Static subset: IRT anchors. Score estimators: anchor-weighted accuracy, p-IRT and gp-IRT.
+Selectors: IRT anchors, 1D Fisher, and MIRT V-optimality (static and adaptive).
+Score estimators: anchor-weighted accuracy, p-IRT and gp-IRT.
 """
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from scipy.special import expit
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min
+
+from cabench.design import adaptive_items as adaptive_items
+from cabench.design import fisher_information as fisher_information
+from cabench.design import fisher_static as fisher_static
+from cabench.design import infer_theta as infer_theta
+from cabench.design import theta_covariance as theta_covariance
+from cabench.design import voptimal_gain as voptimal_gain
+from cabench.design import voptimal_static as voptimal_static
 
 
 def fit_mirt(Y, n_dims=2, epochs=2000, lr=0.05, l2=1e-3, seed=0):
@@ -65,7 +75,7 @@ def fit_theta(Y_obs, mask, alpha, beta, theta_prior, steps=500, lr=0.05):
 
 
 def predict_proba(theta, alpha, beta):
-    return 1 / (1 + np.exp(-(theta @ alpha.T - beta)))
+    return expit(theta @ alpha.T - beta)
 
 
 def irt_anchors(embeddings, k, seed):
