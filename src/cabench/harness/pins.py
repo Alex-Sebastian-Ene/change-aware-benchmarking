@@ -6,6 +6,7 @@ and forces a new file.
 """
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,8 @@ import yaml
 
 ID_LEN = 12
 PINNED_SUFFIX = "_pinned"  # configs/tasks overrides are named <upstream task>_pinned
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+EXACT_VERSION = re.compile(r"\d+(\.\d+)+\S*")  # 0.6.3, 0.6.3.post1; not a range or placeholder
 
 
 @dataclass(frozen=True)
@@ -90,11 +93,22 @@ def _validate(harness: HarnessPin, tasks: tuple[TaskPin, ...]) -> None:
         raise ConfigError(f"lm_eval_sha must be a full 40-char sha, got {harness.lm_eval_sha!r}")
     if not isinstance(harness.batch_size, int):
         raise ConfigError(f"batch_size must be a fixed int, got {harness.batch_size!r}")
+    vllm = harness.vllm_version
+    if not (isinstance(vllm, str) and EXACT_VERSION.fullmatch(vllm)):
+        raise ConfigError(f"vllm_version must be an exact version as a string, got {vllm!r}")
+    for name in ("lockfile_sha256", "apptainer_digest"):
+        value = getattr(harness, name)
+        if not (isinstance(value, str) and SHA256_HEX.fullmatch(value)):
+            raise ConfigError(f"{name} must be a 64-char lowercase hex sha256, got {value!r}")
     if not tasks:
         raise ConfigError("config has no tasks")
     for t in tasks:
         if not is_full_sha(t.dataset_sha):
             raise ConfigError(f"{t.name}: dataset_sha must be a full 40-char sha")
+        for name in ("num_fewshot", "fewshot_seed"):
+            value = getattr(t, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ConfigError(f"{t.name}: {name} must be an int, got {value!r}")
         if t.max_gen_toks is not None:
             if not t.parser_version:
                 raise ConfigError(f"{t.name}: generative task needs a parser_version")
@@ -113,7 +127,11 @@ def load_config(path: Path) -> HarnessConfig:
             f"Configs are immutable: save the change as {expected_filename(path)}"
         )
 
-    raw = yaml.safe_load(path.read_text())
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{path.name}: not valid UTF-8 ({e})") from e
+    raw = yaml.safe_load(text)
     try:
         harness = HarnessPin(**raw["harness"])
         tasks = tuple(
