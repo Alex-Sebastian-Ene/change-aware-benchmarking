@@ -41,7 +41,7 @@ def load_config(path: str | Path, allow_unpinned: bool = False) -> dict:
         cabench.harness.pins.ConfigError if the file breaks a pinning rule.
     """
     pinned = load_pinned(Path(path))
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="utf-8")
     if not allow_unpinned:
         hits = [m for m in UNPINNED_MARKERS if m in text]
         if hits:

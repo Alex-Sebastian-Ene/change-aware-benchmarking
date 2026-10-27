@@ -23,8 +23,15 @@ def build_gen_kwargs(task: TaskPin) -> str:
 
 
 def build_model_args(model: ModelPin, harness: HarnessPin) -> str:
-    """model_args string for lm-eval's vllm backend."""
-    return f"pretrained={model.repo},revision={model.sha},dtype={harness.dtype}"
+    """model_args string for lm-eval's vllm backend.
+
+    tokenizer_revision is set too: lm-eval's vllm backend doesn't default it to
+    `revision`, so without it the tokenizer would come from the repo's main branch.
+    """
+    return (
+        f"pretrained={model.repo},revision={model.sha},"
+        f"tokenizer_revision={model.sha},dtype={harness.dtype}"
+    )
 
 
 def run(
@@ -87,6 +94,6 @@ def run(
                 for s in samples:
                     f.write(json.dumps({"task": name, **s}, default=str) + "\n")
 
-    manifest = build_manifest(model, config, benchmark_versions, project_git_hash)
+    manifest = build_manifest(model, config, benchmark_versions, project_git_hash, limit)
     write_manifest(manifest, run_dir)
     return run_dir

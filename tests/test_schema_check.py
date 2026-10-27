@@ -42,8 +42,8 @@ def write_config(directory: Path, name: str, tasks: list[str], **task_extra) -> 
             "lm_eval_repo": "https://example.com/lm-eval",
             "lm_eval_sha": SHA,
             "vllm_version": "0.0.0",
-            "lockfile_sha256": "x",
-            "apptainer_digest": "y",
+            "lockfile_sha256": "b" * 64,
+            "apptainer_digest": "c" * 64,
         },
         "tasks": [task(t, **task_extra) for t in tasks],
     }
