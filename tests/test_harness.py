@@ -21,13 +21,15 @@ from cabench.harness.pins import (
 from cabench.harness.verify import PinMismatch, check, git, sha256_file, verify_harness
 
 SHA = "a" * 40
+LOCK_SHA256 = "b" * 64
+SIF_SHA256 = "c" * 64
 MODEL = ModelPin(repo="org/model", sha=SHA)
 HARNESS = HarnessPin(
     lm_eval_repo="https://example.com/lm-eval",
     lm_eval_sha=SHA,
     vllm_version="0.0.0",
-    lockfile_sha256="x",
-    apptainer_digest="y",
+    lockfile_sha256=LOCK_SHA256,
+    apptainer_digest=SIF_SHA256,
 )
 TASK = TaskPin(
     name="arc_easy",
@@ -43,8 +45,8 @@ RAW = {
         "lm_eval_repo": "https://example.com/lm-eval",
         "lm_eval_sha": SHA,
         "vllm_version": "0.0.0",
-        "lockfile_sha256": "x",
-        "apptainer_digest": "y",
+        "lockfile_sha256": LOCK_SHA256,
+        "apptainer_digest": SIF_SHA256,
     },
     "tasks": [
         {
@@ -93,6 +95,21 @@ def test_config_edited_in_place_is_refused(tmp_path):
         load_config(path)
 
 
+def test_config_is_read_as_utf8(tmp_path):
+    draft = tmp_path / "utf8.yaml"
+    draft.write_bytes((yaml.safe_dump(RAW) + "# naïve – café\n").encode("utf-8"))
+    path = draft.rename(tmp_path / expected_filename(draft))
+    assert load_config(path).tasks == (TASK,)
+
+
+def test_config_not_utf8_is_refused(tmp_path):
+    draft = tmp_path / "latin1.yaml"
+    draft.write_bytes((yaml.safe_dump(RAW) + "# café\n").encode("latin-1"))
+    path = draft.rename(tmp_path / expected_filename(draft))
+    with pytest.raises(ConfigError, match="UnicodeDecodeError"):
+        load_config(path)
+
+
 def test_config_hash_ignores_line_endings(tmp_path):
     lf, crlf = tmp_path / "lf.yaml", tmp_path / "crlf.yaml"
     lf.write_bytes(b"a: 1\nb: 2\n")
@@ -104,6 +121,10 @@ def test_expected_filename_replaces_old_hash(tmp_path):
     path = write_config(tmp_path, name="base")
     assert expected_filename(path) == path.name
     assert path.name.count("-") == 1
+
+
+def test_expected_filename_keeps_a_12_char_word(tmp_path):
+    assert write_config(tmp_path, name="mmlu-professional").name.startswith("mmlu-professional-")
 
 
 @pytest.mark.parametrize(
@@ -139,6 +160,14 @@ def test_matrix_config_id_matches_pins(tmp_path):
     [
         ({"lm_eval_sha": "main"}, {}, "lm_eval_sha"),
         ({"batch_size": "auto"}, {}, "batch_size"),
+        # placeholders left from template.yaml.example
+        ({"vllm_version": "<e.g. 0.6.3>"}, {}, "vllm_version"),
+        ({"vllm_version": 0.7}, {}, "vllm_version"),  # unquoted in YAML -> float
+        ({"lockfile_sha256": "<sha256 of uv.lock>"}, {}, "lockfile_sha256"),
+        ({"apptainer_digest": "<sha256 of the .sif>"}, {}, "apptainer_digest"),
+        ({"apptainer_digest": ""}, {}, "apptainer_digest"),
+        ({}, {"num_fewshot": "5"}, "num_fewshot"),
+        ({}, {"fewshot_seed": None}, "fewshot_seed"),
         ({}, {"dataset_sha": "main"}, "dataset_sha"),
         ({}, {"max_gen_toks": 256, "stop": ["\n"]}, "parser_version"),
         ({}, {"max_gen_toks": 256, "parser_version": "v1"}, "stop"),
@@ -238,6 +267,12 @@ def test_manifest_ids(tmp_path):
     assert m["run_id"] != manifest.build_manifest(MODEL, cfg)["run_id"]
 
 
+def test_manifest_records_limit(tmp_path):
+    cfg = load_config(write_config(tmp_path))
+    assert manifest.build_manifest(MODEL, cfg)["limit"] is None
+    assert manifest.build_manifest(MODEL, cfg, limit=10)["limit"] == 10
+
+
 # ---------- parsers ----------
 
 
@@ -273,4 +308,6 @@ def test_gen_kwargs_generative_includes_max_gen_toks():
 
 
 def test_model_args_uses_sha_not_branch():
-    assert f"revision={SHA}" in run.build_model_args(MODEL, HARNESS)
+    args = run.build_model_args(MODEL, HARNESS).split(",")
+    assert f"revision={SHA}" in args
+    assert f"tokenizer_revision={SHA}" in args
