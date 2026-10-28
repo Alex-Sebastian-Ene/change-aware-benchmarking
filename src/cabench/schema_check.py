@@ -43,27 +43,28 @@ class CheckResult:
         return not self.failures
 
 
+def _read_table(directory: Path, name: str) -> pd.DataFrame:
+    """<name>/ (parquet files at any depth), <name>.parquet or <name>.csv."""
+    folder = directory / name
+    parquet, csv = directory / f"{name}.parquet", directory / f"{name}.csv"
+    if folder.is_dir() and any(folder.rglob("*.parquet")):
+        return pd.read_parquet(folder)
+    if parquet.exists():
+        return pd.read_parquet(parquet)
+    if csv.exists():
+        # every value as text, and only "" is missing: ids like "007" or "NA" stay as they are
+        wanted = set(COLUMNS[name])
+        return pd.read_csv(
+            csv, usecols=lambda c: c in wanted, dtype=str, keep_default_na=False, na_values=[""]
+        )
+    raise FileNotFoundError(f"no {name}/, {name}.parquet or {name}.csv in {directory}")
+
+
 def read_tables(directory: Path) -> dict[str, pd.DataFrame]:
     """Read the columns the checks need, as strings."""
-    directory = Path(directory)
     tables = {}
     for name, columns in COLUMNS.items():
-        folder = directory / name
-        parquet, csv = directory / f"{name}.parquet", directory / f"{name}.csv"
-        if folder.is_dir() and any(folder.rglob("*.parquet")):
-            df = pd.read_parquet(folder)
-        elif parquet.exists():
-            df = pd.read_parquet(parquet)
-        elif csv.exists():
-            df = pd.read_csv(
-                csv,
-                usecols=lambda c, wanted=set(columns): c in wanted,
-                dtype=str,
-                keep_default_na=False,
-                na_values=[""],
-            )
-        else:
-            raise FileNotFoundError(f"no {name}/, {name}.parquet or {name}.csv in {directory}")
+        df = _read_table(Path(directory), name)
         missing = [c for c in columns if c not in df.columns]
         if missing:
             raise ValueError(f"{name} is missing columns {missing}")
@@ -77,10 +78,9 @@ def load_configs(directory: Path) -> tuple[dict[str, HarnessConfig], list[str]]:
     for path in sorted(Path(directory).glob("*.yaml")):
         try:
             config = load_config(path)
+            configs[config.config_id] = config
         except (ConfigError, yaml.YAMLError) as e:
             errors.append(f"{path.name}: {e}")
-        else:
-            configs[config.config_id] = config
     return configs, errors
 
 
@@ -94,6 +94,22 @@ def _examples(df: pd.DataFrame, columns: list[str]) -> str:
 def _own_rows(long: pd.DataFrame) -> pd.DataFrame:
     """Rows of runs made from our configs, i.e. every source but public."""
     return long[long["source"].ne(PUBLIC).fillna(True).astype(bool)]
+
+
+def _expected_rows(items: pd.DataFrame, configs: dict[str, HarnessConfig]) -> dict[str, int]:
+    """config_id -> number of items in the config's tasks."""
+    counts = items.drop_duplicates("item_id").value_counts(["benchmark", "benchmark_version"])
+    return {
+        config_id: sum(int(counts.get((t.benchmark, t.yaml_version), 0)) for t in c.tasks)
+        for config_id, c in configs.items()
+    }
+
+
+def _unresolved(label: str, bad: pd.DataFrame, key: list[str], what: str) -> list[str]:
+    """One failure line counting the distinct keys in `bad`, or none if it's empty."""
+    if bad.empty:
+        return []
+    return [f"{label}: {len(bad[key].drop_duplicates())} {what}, e.g. {_examples(bad, key)}"]
 
 
 def check_unique_keys(long: pd.DataFrame) -> CheckResult:
@@ -116,25 +132,12 @@ def check_run_counts(
     the latter.
     """
     result = CheckResult("row count per run equals the item count")
-    items_per_benchmark = (
-        tables["items"]
-        .drop_duplicates("item_id")
-        .groupby(["benchmark", "benchmark_version"])
-        .size()
-    )
-    expected = {
-        config_id: sum(
-            int(items_per_benchmark.get((t.benchmark, t.yaml_version), 0)) for t in config.tasks
-        )
-        for config_id, config in configs.items()
-    }
-
     runs = (
         _own_rows(tables["long"])
         .groupby("run_id")
         .agg(rows=("item_id", "size"), config_id=("config_id", "first"))
     )
-    runs["expected"] = runs["config_id"].map(expected)
+    runs["expected"] = runs["config_id"].map(_expected_rows(tables["items"], configs))
     bad = runs[runs["expected"].notna() & (runs["rows"] != runs["expected"])]
 
     for r in bad.head(MAX_EXAMPLES).itertuples():
@@ -149,33 +152,21 @@ def check_references(
     configs: dict[str, HarnessConfig],
     config_errors: list[str] = (),
 ) -> CheckResult:
-    result = CheckResult("every item_id, model and config_id resolves in its table")
-    long = tables["long"]
-
-    unresolved = long[~long["item_id"].isin(tables["items"]["item_id"].dropna())]
-    if len(unresolved):
-        result.failures.append(
-            f"item_id: {unresolved['item_id'].nunique(dropna=False)} values not in items, "
-            f"e.g. {_examples(unresolved, ['item_id'])}"
-        )
-
+    long, own = tables["long"], _own_rows(tables["long"])
     known_models = pd.MultiIndex.from_frame(tables["models"][MODEL_KEY])
-    unresolved = long[~pd.MultiIndex.from_frame(long[MODEL_KEY]).isin(known_models)]
-    if len(unresolved):
-        result.failures.append(
-            f"model: {len(unresolved.drop_duplicates(MODEL_KEY))} (model_id, model_revision) "
-            f"pairs not in models, e.g. {_examples(unresolved, MODEL_KEY)}"
-        )
+    bad_items = long[~long["item_id"].isin(tables["items"]["item_id"].dropna())]
+    bad_models = long[~pd.MultiIndex.from_frame(long[MODEL_KEY]).isin(known_models)]
+    bad_configs = own[~own["config_id"].isin(list(configs))]  # public rows have no config
 
-    own = _own_rows(long)
-    unresolved = own[~own["config_id"].isin(list(configs))]
-    if len(unresolved):
-        result.failures.append(
-            f"config_id: {unresolved['config_id'].nunique(dropna=False)} values match no "
-            f"config file, e.g. {_examples(unresolved, ['config_id'])}"
-        )
-    for error in config_errors:
-        result.failures.append(f"config file doesn't load: {error}")
+    result = CheckResult("every item_id, model and config_id resolves in its table")
+    result.failures += _unresolved("item_id", bad_items, ["item_id"], "values not in items")
+    result.failures += _unresolved(
+        "model", bad_models, MODEL_KEY, "(model_id, model_revision) pairs not in models"
+    )
+    result.failures += _unresolved(
+        "config_id", bad_configs, ["config_id"], "values match no config file"
+    )
+    result.failures += [f"config file doesn't load: {error}" for error in config_errors]
     return result
 
 
