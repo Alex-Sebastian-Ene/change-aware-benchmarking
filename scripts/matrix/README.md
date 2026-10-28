@@ -80,7 +80,11 @@ uv run --group matrix python scripts/matrix/download_details.py Qwen/Qwen2.5-0.5
 uv run --group matrix python scripts/matrix/ingest_public.py $RAW/Qwen__Qwen2.5-0.5B     --data $DATA
 uv run --group matrix python scripts/matrix/ingest_public.py $RAW/meta-llama__Llama-3.2-1B --data $DATA
 uv run --group matrix python scripts/matrix/build_tables.py --data $DATA --raw $RAW
+uv run --group matrix python scripts/check_schema.py $DATA
 ```
+
+`scripts/check_schema.py` is the batch schema check (no duplicate keys, row
+counts match each run's config, every ID resolves). Run it after every ingest.
 
 ---
 
@@ -140,7 +144,9 @@ What it does:
   identical. It keeps the one with the lowest `question_id`.
 
 The `run_id` is `public_<org>__<name>_<timestamp>`. `config_id` is currently
-the placeholder `openllm_v2_public`.
+the placeholder `openllm_v2_public`. It matches no config file, so the schema
+check (`scripts/check_schema.py`) skips the config and row-count checks for
+rows with `source == "public"`.
 
 ### `build_tables.py`
 
@@ -227,16 +233,22 @@ error on missing or extra columns, on values outside `ALLOWED`, or on a null
 ```python
 from utils.config import config_id, load_config, register
 
-cid = config_id("configs/mmlu_pro_v1.yaml")    # first 16 hex chars of SHA-256 of the raw bytes
-cfg = load_config("configs/mmlu_pro_v1.yaml")  # parsed dict, plus cfg["_config_id"]
-register("configs/mmlu_pro_v1.yaml", "configs/registry.tsv")
+path = "configs/harness/mmlu_pro-<hash12>.yaml"
+cid = config_id(path)      # SHA-256 of the file bytes (CRLF -> LF), 64 hex chars
+cfg = load_config(path)    # parsed dict, plus cfg["_config_id"]
+register(path, "configs/harness/registry.tsv")
 ```
 
-- `config_id` hashes the raw file bytes, so any edit, even a comment, gives a
-  new ID. Never edit a config in place. Copy it to a new file instead.
-- `load_config` requires the sections `harness`, `tasks`, `decoding`,
-  `backend`, `environment` and `chat_template`. It rejects files that still
-  contain `TBD`, `TODO` or `FILL_ME`, unless you pass `allow_unpinned=True`.
+- The config format and ID rules are those of the pinned harness,
+  `cabench.harness.pins` (see `configs/harness/README.md`); this module
+  delegates to it, so the matrix tables and the harness manifests carry the
+  same `config_id`.
+- `config_id` hashes the file bytes, so any edit, even a comment, gives a new
+  ID. The filename must end in the first 12 hex characters of that hash, so a
+  config edited in place fails to load. Copy it to a new file instead.
+- `load_config` validates the file with `cabench.harness.pins.load_config`. It
+  also rejects files that still contain `TBD`, `TODO` or `FILL_ME`, unless you
+  pass `allow_unpinned=True`.
 - `register` appends `config_id<TAB>filename` to a registry file. It raises an
   error if a registered file has since changed.
 
