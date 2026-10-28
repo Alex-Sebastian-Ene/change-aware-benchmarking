@@ -106,7 +106,7 @@ def test_config_not_utf8_is_refused(tmp_path):
     draft = tmp_path / "latin1.yaml"
     draft.write_bytes((yaml.safe_dump(RAW) + "# café\n").encode("latin-1"))
     path = draft.rename(tmp_path / expected_filename(draft))
-    with pytest.raises(ConfigError, match="UTF-8"):
+    with pytest.raises(ConfigError, match="UnicodeDecodeError"):
         load_config(path)
 
 
@@ -121,6 +121,10 @@ def test_expected_filename_replaces_old_hash(tmp_path):
     path = write_config(tmp_path, name="base")
     assert expected_filename(path) == path.name
     assert path.name.count("-") == 1
+
+
+def test_expected_filename_keeps_a_12_char_word(tmp_path):
+    assert write_config(tmp_path, name="mmlu-professional").name.startswith("mmlu-professional-")
 
 
 @pytest.mark.parametrize(
