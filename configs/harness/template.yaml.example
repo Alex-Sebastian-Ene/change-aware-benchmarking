@@ -1,0 +1,18 @@
+harness:
+  lm_eval_repo: https://github.com/huggingface/lm-evaluation-harness
+  lm_eval_sha: <40-char commit>
+  vllm_version: <e.g. 0.6.3>
+  dtype: bfloat16
+  batch_size: 32
+  apply_chat_template: false
+  lockfile_sha256: <sha256 of uv.lock>
+  apptainer_digest: <sha256 of the .sif>
+
+tasks:
+  - name: arc_easy_pinned
+    yaml_version: "1.0"
+    dataset_repo: allenai/ai2_arc
+    dataset_sha: 210d026faf9955653af8916fad021475a3f00453
+    num_fewshot: 25
+    fewshot_seed: 1234
+    max_gen_toks: null
