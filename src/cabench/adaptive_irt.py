@@ -3,17 +3,16 @@
 
 This is the adaptive counterpart of irt.py (static subsets)
 Contains the following functions:
-    fit_2pl           fit a, b (and training thetas) on known models - gets forzen after computed
+    fit_2pl           fit a, b (and training thetas) on known models - get forzen after they're computed
     run_fluid         evaluate one new model adaptively, up to n_max items:
       select_mfi        next item = most Fisher information at the current theta
       ability_estimate  MAP theta (N(0, 1) prior) from the answers so far
 
 Everything except fit_2pl (see todo at the end of file) follows the Fluid repo 
-    (fluid_benchmarking/engine.py and estimators.py). 
+    (fluid_benchmarking/engine.py, estimators.py and irt_utils.py). 
 
-fit_2pl reuses irt.fit_mirt currently, TODO Fluid's version
-The response matrix comes from scripts/irt/efficbench.py 
-    and the train/test model split from scripts/irt/protocol.py
+Used by scripts/irt/adaptive_run_experiment.py, which loads the response matrix
+(scripts/irt/efficbench.py) and splits the models (cabench.splits)
 
 """
 
@@ -45,7 +44,7 @@ def fit_2pl(Y, epochs=2000, lr=0.05, l2=1e-3, seed=0):
 
     # convert to Fluid's (a, b) form
     # Fluid's fit forces a > 0. As a stand-in, items with a <=0 are replaced with a small epsilon
-    #   these carry no information and won't be picked 
+    #   these carry basically no information so are only picked after every other item has been picked
     a = np.maximum(alpha, A_MIN)
     b = beta / a
     return a, b, theta
@@ -58,6 +57,7 @@ def fisher_information(theta, a, b, D=1.0):
     return (D**2) * (a**2) * (p * (1.0 - p))
 
 
+# Constants match Fluid's settings
 PRIOR_MEAN = 0.0
 PRIOR_SD = 1.0
 THETA_MIN, THETA_MAX = -4.0, 4.0  # theta is always kept inside this range
@@ -79,7 +79,10 @@ def ability_estimate(responses, a, b, theta0=PRIOR_MEAN):
     y, a, b = responses[seen], np.asarray(a, dtype=float)[seen], np.asarray(b, dtype=float)[seen]
 
     theta = _newton(theta0, y, a, b)
-    return theta if theta is not None else _bisection(y, a, b)
+    if theta is not None:
+        return theta
+    else:
+        return _bisection(y, a, b)
 
 
 def _score(theta, y, a, b):
@@ -172,9 +175,9 @@ def run_fluid(responses, a, b, start_ability, n_max):
     start_ability  theta used to pick the first item (Fluid: the mean theta of the
                    training models), so every model gets the same first question
 
-    Returns (abilities, items): abilities[k - 1] is the theta estimate after k items, and
-    items lists the asked item indices in order. One run up to n_max therefore gives the
-    result for every smaller budget too.
+    Returns (abilities, items) for one model
+    abilities[k - 1] is the theta estimate after k items, and items lists the asked item indices in order. 
+    One run up to n_max therefore gives the result for every smaller budget too.
     """
     responses = np.asarray(responses, dtype=float)
     n_items = len(a)
@@ -197,7 +200,7 @@ def run_fluid(responses, a, b, start_ability, n_max):
         answered[idx] = r
 
         # 3. re-estimate theta from every answer so far, starting from the previous estimate.
-        # A correct answer moves theta up (so the next item is harder), a wrong one down.
+        # A correct answer moves theta up (so the next item is usually harder), a wrong one down.
         theta = ability_estimate(answered, a, b, theta0=theta)
         items.append(idx)
         abilities.append(theta)
