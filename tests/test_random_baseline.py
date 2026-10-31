@@ -55,6 +55,17 @@ def test_proportional_allocation():
         b.proportional_allocation(strata, 101, rng)
 
 
+def test_proportional_allocation_awkward_shares_and_nan():
+    # thirds never add up exactly in floats, so the running total has to stay in integers
+    strata = pd.Series(list("abcdefg") * 7 + ["h"] * 3)
+    rng = np.random.default_rng(0)
+    for k in range(len(strata) + 1):
+        counts = b.proportional_allocation(strata, k, rng)
+        assert counts.sum() == k and (counts <= strata.value_counts().sort_index()).all()
+
+    assert b.proportional_allocation(pd.Series(["a", "a", None]), 2, rng).to_dict() == {"a": 2}
+
+
 def test_sample_items_distinct_and_reproducible():
     items = pd.Index([f"i{j}" for j in range(100)])
     first = b.sample_items(items, 10, np.random.default_rng(1))
@@ -67,6 +78,14 @@ def test_sample_items_stratified_counts():
     strata = pd.Series(["a"] * 50 + ["b"] * 30 + ["c"] * 20, index=items)
     chosen = b.sample_items(items, 10, np.random.default_rng(1), strata=strata)
     assert strata[chosen].value_counts().to_dict() == {"a": 5, "b": 3, "c": 2}
+
+
+def test_stratified_items_have_equal_inclusion_probability():
+    items = pd.Index([f"i{j}" for j in range(30)])
+    strata = pd.Series(["a"] * 17 + ["b"] * 11 + ["c"] * 2, index=items)
+    rng = np.random.default_rng(0)
+    picks = pd.Series(np.concatenate([b.sample_items(items, 7, rng, strata) for _ in range(20000)]))
+    assert (picks.value_counts() / 20000).to_numpy() == pytest.approx(7 / 30, abs=0.02)
 
 
 def test_random_subset_errors_shape_and_bias():
