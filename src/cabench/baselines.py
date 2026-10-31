@@ -7,10 +7,12 @@ index "model_id@model_revision", columns item_id, values 1.0 / 0.0 / NaN (NaN = 
 response, never 0). Compute is counted in items: a subset of k items costs k.
 """
 
-from collections.abc import Sequence
+import warnings
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.cluster.vq import kmeans2
 
 Values = float | np.ndarray | pd.Series
 
@@ -86,7 +88,14 @@ def proportional_allocation(strata: pd.Series, k: int, rng: np.random.Generator)
     Raises:
         ValueError: if k is not in 0..len(strata).
     """
-    raise NotImplementedError
+    n = strata.count()  # items with a NaN stratum are never drawn
+    if not 0 <= k <= n:
+        raise ValueError(f"subset size k={k} must be in 0..{n}")
+    sizes = strata.value_counts().sort_index()
+    # whole numbers throughout: a float running total can miss its last integer
+    floors, remainders = np.divmod(k * sizes, n)
+    crossed = (remainders.cumsum() + rng.integers(n)) // n
+    return floors + crossed.diff().fillna(crossed).astype(int)
 
 
 def sample_items(
@@ -107,7 +116,33 @@ def sample_items(
     Returns:
         The k chosen item_ids, no repeats.
     """
-    raise NotImplementedError
+    if strata is None:
+        return items[rng.choice(len(items), size=k, replace=False)]
+    labels = strata[items]
+    counts = proportional_allocation(labels, k, rng)
+    groups = labels.groupby(labels.to_numpy()).indices
+    picked = [rng.choice(groups[label], size=n, replace=False) for label, n in counts.items()]
+    return items[np.concatenate(picked)]
+
+
+def _error_table(M: pd.DataFrame, rows: list[pd.DataFrame]) -> pd.DataFrame:
+    """Join per-subset estimates with each model's full score."""
+    errors = pd.concat(rows, ignore_index=True)
+    errors["full"] = errors["model"].map(full_scores(M))
+    errors["err"] = errors["est"] - errors["full"]
+    return errors
+
+
+def _simulate(M: pd.DataFrame, ks: Sequence[int], n_rep: int, draw: Callable) -> pd.DataFrame:
+    """Score every model on draw(k) for each k and repetition; models share each subset."""
+    rows = [
+        pd.DataFrame(
+            {"model": M.index, "k": k, "rep": rep, "est": subset_scores(M, draw(k)).to_numpy()}
+        )
+        for k in ks
+        for rep in range(n_rep)
+    ]
+    return _error_table(M, rows)
 
 
 def random_subset_errors(
@@ -134,7 +169,8 @@ def random_subset_errors(
         model, k, rep, est (subset score), full (full score), err (est - full).
         est is NaN for a model with no answers in the subset.
     """
-    raise NotImplementedError
+    rng = np.random.default_rng(seed)
+    return _simulate(M, ks, n_rep, lambda k: sample_items(M.columns, k, rng, strata))
 
 
 def empirical_vs_analytic(errors: pd.DataFrame, n_items: int) -> pd.DataFrame:
@@ -149,7 +185,14 @@ def empirical_vs_analytic(errors: pd.DataFrame, n_items: int) -> pd.DataFrame:
         analytic (analytic_se(full, k, n_items)) and ratio (empirical / analytic, about
         1 if everything is right).
     """
-    raise NotImplementedError
+    out = errors.groupby(["model", "k"], as_index=False).agg(
+        empirical=("est", "std"), full=("full", "first")
+    )
+    out["analytic"] = [
+        float(analytic_se(p, k, n_items)) for p, k in zip(out["full"], out["k"], strict=True)
+    ]
+    out["ratio"] = out["empirical"] / out["analytic"]
+    return out.drop(columns="full")
 
 
 def summarise_errors(
@@ -169,7 +212,19 @@ def summarise_errors(
         q<level> column per level (e.g. q80, q95): that quantile of |err|. NaN errors
         are ignored.
     """
-    raise NotImplementedError
+    by = by if isinstance(by, str) else list(by)
+    errors = errors.assign(squared=errors["err"] ** 2, absolute=errors["err"].abs())
+    grouped = errors.groupby(by)
+    out = pd.DataFrame(
+        {
+            "bias": grouped["err"].mean(),
+            "rmse": np.sqrt(grouped["squared"].mean()),
+            "mae": grouped["absolute"].mean(),
+        }
+    )
+    for level in levels:
+        out[f"q{level * 100:g}"] = grouped["absolute"].quantile(level)
+    return out
 
 
 def budget_for_error(summary: pd.DataFrame, target: float, metric: str = "rmse") -> int | None:
@@ -183,7 +238,8 @@ def budget_for_error(summary: pd.DataFrame, target: float, metric: str = "rmse")
     Returns:
         The smallest such k, or None if no k in the summary reaches it.
     """
-    raise NotImplementedError
+    reached = summary.index[summary[metric] <= target]
+    return int(reached.min()) if len(reached) else None
 
 
 def noise_reference(long: pd.DataFrame, benchmark: str, config_id: str) -> pd.DataFrame:
@@ -199,7 +255,12 @@ def noise_reference(long: pd.DataFrame, benchmark: str, config_id: str) -> pd.Da
         One row per model, indexed "model_id@model_revision", with columns n_runs,
         mean, sd and range of the per-run accuracy. sd is NaN for a model with one run.
     """
-    raise NotImplementedError
+    sel = long[(long["benchmark"] == benchmark) & (long["config_id"] == config_id)]
+    model = (sel["model_id"] + "@" + sel["model_revision"]).rename("model")
+    per_run = sel.groupby([model, "run_id"])["correct"].mean()
+    return per_run.groupby("model").agg(
+        n_runs="count", mean="mean", sd="std", range=lambda s: s.max() - s.min()
+    )
 
 
 # ---------- extensions: data-driven selection and single-subset intervals ----------
@@ -209,7 +270,7 @@ def noise_reference(long: pd.DataFrame, benchmark: str, config_id: str) -> pd.Da
 
 def item_difficulty(M_calib: pd.DataFrame) -> pd.Series:
     """item_id -> fraction of calibration models that answered it correctly (NaN skipped)."""
-    raise NotImplementedError
+    return M_calib.mean(axis=0)
 
 
 def difficulty_strata(difficulty: pd.Series, n_bins: int = 5) -> pd.Series:
@@ -217,7 +278,8 @@ def difficulty_strata(difficulty: pd.Series, n_bins: int = 5) -> pd.Series:
 
     Pass the result as `strata` to sample_items. Items with NaN difficulty get NaN.
     """
-    raise NotImplementedError
+    # rank first: difficulties tie a lot, and tied values would otherwise share a bin
+    return pd.qcut(difficulty.rank(method="first"), n_bins, labels=False)
 
 
 def systematic_sample(order: pd.Index, k: int, rng: np.random.Generator) -> pd.Index:
@@ -231,7 +293,10 @@ def systematic_sample(order: pd.Index, k: int, rng: np.random.Generator) -> pd.I
     Returns:
         The k chosen item_ids.
     """
-    raise NotImplementedError
+    n = len(order)
+    if not 1 <= k <= n:
+        raise ValueError(f"subset size k={k} must be in 1..{n}")
+    return order[(rng.integers(n) + np.arange(k) * n) // k]
 
 
 def cluster_anchors(M_calib: pd.DataFrame, k: int, seed: int = 0) -> tuple[pd.Index, pd.Series]:
@@ -249,7 +314,19 @@ def cluster_anchors(M_calib: pd.DataFrame, k: int, seed: int = 0) -> tuple[pd.In
     Returns:
         The anchor item_ids, and anchor item_id -> weight (weights sum to 1).
     """
-    raise NotImplementedError
+    answered = M_calib.dropna(axis=1, how="all")
+    points = answered.fillna(answered.mean(axis=0)).T.to_numpy(dtype=float)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # empty clusters are dropped below
+        centres, labels = kmeans2(points, k, minit="points", rng=seed)
+    clusters = [np.flatnonzero(labels == c) for c in np.unique(labels)]
+    nearest = [
+        members[((points[members] - centres[labels[members[0]]]) ** 2).sum(axis=1).argmin()]
+        for members in clusters
+    ]
+    anchors = answered.columns[nearest]
+    weights = np.array([len(members) for members in clusters]) / len(points)
+    return anchors, pd.Series(weights, index=anchors)
 
 
 def weighted_scores(M: pd.DataFrame, items: pd.Index, weights: pd.Series) -> pd.Series:
@@ -264,7 +341,9 @@ def weighted_scores(M: pd.DataFrame, items: pd.Index, weights: pd.Series) -> pd.
     Returns:
         One value per model, index = M.index.
     """
-    raise NotImplementedError
+    answers = M[items]
+    w = weights[items]
+    return (answers * w).sum(axis=1) / answers.notna().mul(w).sum(axis=1)
 
 
 def calibrated_scores(M_calib: pd.DataFrame, M_eval: pd.DataFrame, items: pd.Index) -> pd.Series:
@@ -276,7 +355,10 @@ def calibrated_scores(M_calib: pd.DataFrame, M_eval: pd.DataFrame, items: pd.Ind
     Returns:
         One predicted full score per model of M_eval.
     """
-    raise NotImplementedError
+    subset = subset_scores(M_calib, items)
+    answered = subset.notna()
+    slope, intercept = np.polyfit(subset[answered], full_scores(M_calib)[answered], deg=1)
+    return intercept + slope * subset_scores(M_eval, items)
 
 
 def bootstrap_se(
@@ -290,7 +372,22 @@ def bootstrap_se(
     Returns:
         One value per model, index = M.index.
     """
-    raise NotImplementedError
+    draws = [
+        subset_scores(M, items[rng.integers(len(items), size=len(items))]) for _ in range(n_boot)
+    ]
+    return pd.concat(draws, axis=1).std(axis=1)
+
+
+def _anchor_errors(
+    M_eval: pd.DataFrame, M_calib: pd.DataFrame, ks: Sequence[int], seed: int
+) -> pd.DataFrame:
+    """One rep per k: the anchors are fixed once the calibration models are."""
+    rows = []
+    for k in ks:
+        anchors, weights = cluster_anchors(M_calib, k, seed)
+        est = weighted_scores(M_eval, anchors, weights).to_numpy()
+        rows.append(pd.DataFrame({"model": M_eval.index, "k": k, "rep": 0, "est": est}))
+    return _error_table(M_eval, rows)
 
 
 def subset_errors(
@@ -319,7 +416,28 @@ def subset_errors(
     Raises:
         ValueError: for an unknown method or a missing M_calib / subtasks.
     """
-    raise NotImplementedError
+    if method == "subtask" and subtasks is None:
+        raise ValueError("method 'subtask' needs subtasks")
+    if method in ("difficulty", "systematic", "anchors") and M_calib is None:
+        raise ValueError(f"method {method!r} needs M_calib")
+
+    match method:
+        case "uniform":
+            strata = None
+        case "subtask":
+            strata = subtasks
+        case "difficulty":
+            strata = difficulty_strata(item_difficulty(M_calib))
+        case "systematic":
+            rng = np.random.default_rng(seed)
+            order = item_difficulty(M_calib).dropna().sort_values(kind="stable").index
+            errors = _simulate(M_eval, ks, n_rep, lambda k: systematic_sample(order, k, rng))
+            return errors.assign(method=method)
+        case "anchors":
+            return _anchor_errors(M_eval, M_calib, ks, seed).assign(method=method)
+        case _:
+            raise ValueError(f"unknown method {method!r}")
+    return random_subset_errors(M_eval, ks, n_rep, seed, strata).assign(method=method)
 
 
 # ---------- numpy-array versions used by scripts/irt (A. Vijaykrishnan) ----------
@@ -330,21 +448,5 @@ def random_items(n_items, k, rng):
 
 
 def stratified_items(subjects, k, rng):
-    """k random items allocated to subjects in proportion to subject size.
-
-    Leftover slots after rounding down go to subjects drawn in proportion to their remainder.
-    """
-    names, inverse, counts = np.unique(subjects, return_inverse=True, return_counts=True)
-    quota = k * counts / counts.sum()
-    alloc = np.floor(quota).astype(int)
-    frac = quota - alloc
-    extra = k - alloc.sum()
-    if extra:
-        alloc[rng.choice(len(names), size=extra, replace=False, p=frac / frac.sum())] += 1
-    return np.concatenate(
-        [
-            rng.choice(np.flatnonzero(inverse == s), size=n, replace=False)
-            for s, n in enumerate(alloc)
-            if n
-        ]
-    )
+    """Positions of k random items, allocated to subjects by proportional_allocation."""
+    return sample_items(pd.RangeIndex(len(subjects)), k, rng, pd.Series(subjects)).to_numpy()
