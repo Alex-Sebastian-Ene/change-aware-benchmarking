@@ -67,11 +67,13 @@ def build_manifest(
     config: HarnessConfig,
     benchmark_versions: dict[str, str] | None = None,
     project_git_hash: str | None = None,
+    limit: int | None = None,
 ) -> dict:
     """Assemble the manifest dict, including config_id and run_id.
 
     project_git_hash is lm-eval's reported `git_hash`, which is the commit of the
-    repo the run was launched from (this project), not of lm-eval.
+    repo the run was launched from (this project), not of lm-eval. limit is the
+    per-task item cap of a partial (test) run; None for a full run.
     """
     manifest = {
         "config_file": config.path.name,
@@ -81,6 +83,7 @@ def build_manifest(
         "tasks": [asdict(t) for t in config.tasks],
         "benchmark_versions": benchmark_versions or {},
         "project_git_hash": project_git_hash,
+        "limit": limit,
         "runtime": runtime_facts(),
     }
     manifest["run_id"] = sha256_text(canonical_json(manifest))
