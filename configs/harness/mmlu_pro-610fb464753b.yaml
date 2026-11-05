@@ -1,12 +1,12 @@
 harness:
   lm_eval_repo: https://github.com/huggingface/lm-evaluation-harness
   lm_eval_sha: e5a9872c7f6e43057958dc3d3ecdccb3bb51fba0
-  vllm_version: <e.g. 0.6.3>
+  vllm_version: 0.32.0
   dtype: bfloat16
   batch_size: 32
   apply_chat_template: false
-  lockfile_sha256: <sha256 of uv.lock>
-  apptainer_digest: <sha256 of the .sif>
+  lockfile_sha256: 6815b4cae4c40046f8bd7adf66981c1dd96f8a20837ee5d5c057c4ffc622bc05
+  apptainer_digest: 473f81faa4e338f3a43a1af72bd0af62dfee0ebecc3b8b7bd9b0e4f71ce9424b
 
 tasks:
   - name: leaderboard_mmlu_pro_pinned
