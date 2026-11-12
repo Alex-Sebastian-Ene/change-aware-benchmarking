@@ -97,14 +97,16 @@ def test_config_edited_in_place_is_refused(tmp_path):
 
 def test_config_is_read_as_utf8(tmp_path):
     draft = tmp_path / "utf8.yaml"
-    draft.write_bytes((yaml.safe_dump(RAW) + "# naïve – café\n").encode("utf-8"))
+    # 0xC3 0xA9 is an accented e in UTF-8
+    draft.write_bytes(yaml.safe_dump(RAW).encode() + b"# cafe " + bytes([0xC3, 0xA9]) + b"\n")
     path = draft.rename(tmp_path / expected_filename(draft))
     assert load_config(path).tasks == (TASK,)
 
 
 def test_config_not_utf8_is_refused(tmp_path):
     draft = tmp_path / "latin1.yaml"
-    draft.write_bytes((yaml.safe_dump(RAW) + "# café\n").encode("latin-1"))
+    # 0xE9 on its own is not valid UTF-8
+    draft.write_bytes(yaml.safe_dump(RAW).encode() + b"# cafe " + bytes([0xE9]) + b"\n")
     path = draft.rename(tmp_path / expected_filename(draft))
     with pytest.raises(ConfigError, match="UnicodeDecodeError"):
         load_config(path)
