@@ -167,18 +167,22 @@ def select_mfi(theta, a, b, used):
     return idx
 
 
-def run_fluid(responses, a, b, start_ability, n_max):
+def run_fluid(responses, a, b, start_ability, n_max, select=None, estimate=None):
     """Fluid Benchmarking for one model: ask up to n_max items adaptively.
 
     responses      the model's full 0/1 answers on every item
     a, b           frozen item parameters from fit_2pl
     start_ability  theta used to pick the first item (Fluid: the mean theta of the
                    training models), so every model gets the same first question
+    select, estimate  optional replacements for select_mfi / ability_estimate, same signatures
+                   (e.g. a multidimensional selector; theta can then be a vector)
 
     Returns (abilities, items) for one model
     abilities[k - 1] is the theta estimate after k items, and items lists the asked item indices in order. 
     One run up to n_max therefore gives the result for every smaller budget too.
     """
+    select = select or select_mfi
+    estimate = estimate or ability_estimate
     responses = np.asarray(responses, dtype=float)
     n_items = len(a)
     used = np.zeros(n_items, dtype=bool)  # items asked so far
@@ -189,7 +193,7 @@ def run_fluid(responses, a, b, start_ability, n_max):
     theta = start_ability
     for _ in range(n_steps):
         # 1. pick the most informative item at the current ability estimate
-        idx = select_mfi(theta, a, b, used)
+        idx = select(theta, a, b, used)
 
         # 2. retrieve the model's answer
         r = responses[idx] 
@@ -201,7 +205,7 @@ def run_fluid(responses, a, b, start_ability, n_max):
 
         # 3. re-estimate theta from every answer so far, starting from the previous estimate.
         # A correct answer moves theta up (so the next item is usually harder), a wrong one down.
-        theta = ability_estimate(answered, a, b, theta0=theta)
+        theta = estimate(answered, a, b, theta0=theta)
         items.append(idx)
         abilities.append(theta)
     return abilities, items
