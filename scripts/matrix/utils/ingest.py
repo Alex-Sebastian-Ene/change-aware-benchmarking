@@ -15,6 +15,7 @@ with the lowest source index is kept, so public and own runs keep the same copy.
 from __future__ import annotations
 
 import json
+import string
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,23 @@ EXTRACTORS: dict[str, Extractor] = {
 }
 
 LOGLIK_METRICS = ("acc_norm", "acc")
+LETTERS = string.ascii_uppercase  # as in ingest_public.py: pred is stored as a letter
+
+
+def _gold_index(target) -> int:
+    """Index of the correct choice from a sample's `target`.
+
+    lm-eval logs `target` as doc_to_target returns it: an int for most tasks, but the
+    answer letter ("A"-"J") for MMLU-Pro, whose doc_to_target is the `answer` field.
+    """
+    if isinstance(target, int) and not isinstance(target, bool):
+        return target
+    t = str(target).strip()
+    if t.isdigit():
+        return int(t)
+    if len(t) == 1 and t in LETTERS:
+        return LETTERS.index(t)
+    raise ValueError(f"can't read target {target!r} as a choice index or letter")
 GEN_METRICS = ("exact_match", "prompt_level_strict_acc")
 
 
@@ -128,9 +146,9 @@ def read_samples(
             gen_tokens = count_tokens(pred) if (count_tokens and pred) else 0
         else:
             lps = [float(r[0][0]) for r in rec["resps"]]
-            gold = int(rec["target"])
+            gold = _gold_index(rec["target"])
             logprob = lps[gold]
-            pred = str(max(range(len(lps)), key=lps.__getitem__))
+            pred = LETTERS[max(range(len(lps)), key=lps.__getitem__)]
 
         prompt = rec["arguments"][0][0] if rec.get("arguments") else None
         long_rows.append(dict(

@@ -51,6 +51,19 @@ def cuda_version() -> str | None:
     return torch.version.cuda
 
 
+def package_versions() -> dict:
+    """Installed versions of the packages that compute the scores (None if missing)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    out = {}
+    for name in ("torch", "transformers", "vllm", "datasets", "accelerate"):
+        try:
+            out[name] = version(name)
+        except PackageNotFoundError:
+            out[name] = None
+    return out
+
+
 def runtime_facts() -> dict:
     """Facts about where/when this run happened."""
     return {
@@ -59,6 +72,7 @@ def runtime_facts() -> dict:
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "gpus": gpu_info(),
         "cuda": cuda_version(),
+        "packages": package_versions(),
     }
 
 

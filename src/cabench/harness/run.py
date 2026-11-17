@@ -1,4 +1,4 @@
-"""Run pinned evaluations. The only harness module that touches lm_eval / vllm."""
+"""Run pinned evaluations. The only harness module that touches lm_eval."""
 
 import json
 from datetime import UTC, datetime
@@ -23,15 +23,16 @@ def build_gen_kwargs(task: TaskPin) -> str:
 
 
 def build_model_args(model: ModelPin, harness: HarnessPin) -> str:
-    """model_args string for lm-eval's vllm backend.
+    """model_args string for lm-eval's `harness.backend` model type.
 
-    tokenizer_revision is set too: lm-eval's vllm backend doesn't default it to
-    `revision`, so without it the tokenizer would come from the repo's main branch.
+    vllm: tokenizer_revision is set too, because lm-eval's vllm backend doesn't default
+    it to `revision`, so without it the tokenizer would come from the repo's main branch.
+    hf: HFLM loads the tokenizer at `revision` itself and has no tokenizer_revision.
     """
-    return (
-        f"pretrained={model.repo},revision={model.sha},"
-        f"tokenizer_revision={model.sha},dtype={harness.dtype}"
-    )
+    args = f"pretrained={model.repo},revision={model.sha},"
+    if harness.backend == "vllm":
+        args += f"tokenizer_revision={model.sha},"
+    return args + f"dtype={harness.dtype}"
 
 
 def run(
@@ -65,7 +66,7 @@ def run(
     project_git_hash = None
     for t in config.tasks:
         result = lm_eval.simple_evaluate(
-            model="vllm",
+            model=harness.backend,
             model_args=build_model_args(model, harness),
             tasks=[t.name],
             task_manager=task_manager,

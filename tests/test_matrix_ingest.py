@@ -19,7 +19,7 @@ T1 = datetime(2026, 11, 1, 12, tzinfo=UTC)
 T2 = datetime(2026, 11, 2, 12, tzinfo=UTC)
 
 
-def write_samples(path: Path, docs: list[tuple[int, str, int]]) -> Path:
+def write_samples(path: Path, docs: list[tuple[int, str, int]], target=0) -> Path:
     """One lm-eval sample per (question_id, question, acc), in file order."""
     with open(path, "w") as f:
         for doc_id, (qid, question, acc) in enumerate(docs):
@@ -33,7 +33,7 @@ def write_samples(path: Path, docs: list[tuple[int, str, int]]) -> Path:
             rec = {
                 "doc_id": doc_id,
                 "doc": doc,
-                "target": 0,
+                "target": target,
                 "resps": [[["-0.5", True]], [["-1.5", False]]],
                 "acc": acc,
             }
@@ -84,3 +84,16 @@ def test_timestamp_needs_a_timezone(tmp_path):
     path = write_samples(tmp_path / "s.jsonl", [(1, "q1", 1)])
     with pytest.raises(ValueError, match="timezone"):
         read(path, timestamp=datetime(2026, 11, 1, 12))
+
+
+@pytest.mark.parametrize("target", [0, "0", "A"])
+def test_target_as_index_or_letter(tmp_path, target):
+    # MMLU-Pro logs the answer letter as target; other tasks log an index
+    long, _ = read(write_samples(tmp_path / "s.jsonl", [(1, "q1", 1)], target=target))
+    assert long["logprob"].tolist() == [-0.5]
+    assert long["pred"].tolist() == ["A"]  # a letter, as in public rows
+
+
+def test_target_letter_picks_its_choice(tmp_path):
+    long, _ = read(write_samples(tmp_path / "s.jsonl", [(1, "q1", 0)], target="B"))
+    assert long["logprob"].tolist() == [-1.5]

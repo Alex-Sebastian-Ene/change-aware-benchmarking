@@ -14,6 +14,7 @@ What runs where:
 | Piece | Where it lives | What pins it |
 |---|---|---|
 | CUDA, torch, vLLM | container image `vllm.sif`, unpacked to `vllm_sandbox/` | `apptainer_digest` |
+| Model backend | `backend` in the config (`hf` = HF transformers) | `transformers_version` (checked) |
 | lm-eval code | fork checkout on scratch | `lm_eval_sha` |
 | lm-eval's other packages | `ctr-venv` on scratch | `configs/harness/ctr-venv-freeze.txt` (recorded, not checked) |
 | `cabench` and its packages | this repo, `uv.lock` | `lockfile_sha256` |
@@ -254,6 +255,8 @@ A config fixes every setting that can change an answer. Its sha256 is its `confi
    | `dtype` | `bfloat16` |
    | `batch_size` | a fixed integer (`32`), never `auto` |
    | `apply_chat_template` | `false` for base models, `true` for instruct models |
+   | `backend` | `hf`. The pinned fork's vLLM backend doesn't work with vLLM 0.32.0 (see Known issues) |
+   | `transformers_version` | `ctr $VENV/bin/python -c "import transformers; print(transformers.__version__)"`, in quotes |
    | `lockfile_sha256` | `sha256sum uv.lock \| cut -d' ' -f1` |
    | `apptainer_digest` | `cat $BOX/.source_sif_sha256` |
    | task `name` | the `task:` value in the pinned YAML |
@@ -275,7 +278,8 @@ A config fixes every setting that can change an answer. Its sha256 is its `confi
    uv run python -c "from pathlib import Path; from cabench.harness.pins import load_config; print(load_config(Path('configs/harness/<printed name>')).config_id)"
    ```
 
-   Name configs by what they cover, e.g. `mmlu_pro-<hash12>.yaml` for MMLU-Pro on base models.
+   Name configs by what they cover, e.g. `mmlu_pro_hf-<hash12>.yaml` for MMLU-Pro on base models
+   with the HF backend.
 
 4. Commit the config together with `uv.lock` and `ctr-venv-freeze.txt`. Never edit it again:
    any change, even a comment, goes in a new file.
@@ -341,71 +345,28 @@ pinned revisions into `HF_HOME`, so offline compute nodes can read them.
 
 ## Part 5. Running evaluations
 
-### 5.1 Job script
+### 5.1 Job script and pre-flight check
 
-Save as `$REPO/scripts/slurm/eval.sbatch`:
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=eval
-#SBATCH --partition=a100
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-#SBATCH --time=04:00:00
-#SBATCH --output=/scratch/%u/eval_logs/%x-%j.log
-set -euo pipefail
-
-# Inputs, passed with sbatch --export: MODEL_REPO, MODEL_SHA, CONFIG (path relative to the repo),
-# optional LIMIT (smoke runs) and OUT.
-: "${MODEL_REPO:?}" "${MODEL_SHA:?}" "${CONFIG:?}"
-LIMIT=${LIMIT:-None}
-SCR=/scratch/$USER
-OUT=${OUT:-$SCR/eval_runs}
-REPO=$HOME/gdp/change-aware-benchmarking
-BOX=$SCR/vllm_sandbox
-
-module load apptainer
-
-# The sandbox must come from the .sif the config pins.
-want=$(awk '/apptainer_digest:/ {gsub(/"/, "", $2); print $2}' "$REPO/$CONFIG")
-have=$(cat "$BOX/.source_sif_sha256")
-[ "$want" = "$have" ] || { echo "sandbox is from $have, config pins $want"; exit 1; }
-
-cd "$REPO"
-apptainer exec --nv --cleanenv --bind /scratch \
-  --env PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$SCR/git-env/bin \
-  --env PYTHONPATH=$REPO/src \
-  --env HF_HOME=$SCR/hf_cache --env HF_HUB_OFFLINE=1 --env HF_DATASETS_OFFLINE=1 \
-  --env XDG_CACHE_HOME=$SCR/.cache \
-  --env CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} \
-  --env SLURM_JOB_ID=$SLURM_JOB_ID \
-  "$BOX" "$SCR/ctr-venv/bin/python" - <<EOF
-from pathlib import Path
-from cabench.harness.pins import ModelPin, load_config
-from cabench.harness.run import run
-
-run_dir = run(
-    ModelPin(repo="$MODEL_REPO", sha="$MODEL_SHA"),
-    load_config(Path("$CONFIG")),
-    Path("$OUT"),
-    lm_eval_dir=Path("$SCR/lm-evaluation-harness"),
-    lockfile=Path("uv.lock"),
-    sif=Path("$SCR/vllm.sif"),
-    limit=$LIMIT,
-)
-print("RUN_DIR", run_dir)
-EOF
-```
-
-`--cleanenv` stops your shell's variables leaking into the container; everything the run needs
-is passed with `--env`. `CUDA_VISIBLE_DEVICES` keeps vLLM on the GPU Slurm gave the job, and
-`SLURM_JOB_ID` is recorded in the manifest.
+The job script is `scripts/slurm/eval.sbatch`. It checks the sandbox comes from the pinned
+`.sif`, then runs `scripts/run_eval.py` inside the container with `--cleanenv`, offline HF
+settings, and the job's GPU. Inputs are passed with `sbatch --export`: `MODEL_REPO`,
+`MODEL_SHA`, `CONFIG` (path relative to the repo), and optionally `LIMIT` and `OUT`.
 
 ```bash
 mkdir -p /scratch/$USER/eval_logs
 ```
+
+Before queueing anything, check every pin on the login node. This doesn't load the model, but
+it hashes the `.sif`, so it takes a few minutes:
+
+```bash
+conda deactivate
+cd $REPO
+ctr env PYTHONPATH=$REPO/src $VENV/bin/python scripts/run_eval.py --check-only \
+  --config configs/harness/<config>.yaml --model <repo> --sha <sha>
+```
+
+It must end with `PINS_OK`. A `PinMismatch` names the pin that's wrong (see Troubleshooting).
 
 ### 5.2 Smoke run
 
@@ -423,7 +384,7 @@ records `limit`, so a partial run can always be told apart.
 
 ### 5.3 Full runs
 
-Same command without `LIMIT` and `OUT`:
+Same command without `LIMIT` and `OUT`. Allow about 1–3 hours per 0.5B model with the HF backend:
 
 ```bash
 sbatch --export=ALL,MODEL_REPO=Qwen/Qwen2.5-0.5B,MODEL_SHA=<sha>,CONFIG=configs/harness/<config>.yaml \
@@ -462,39 +423,7 @@ and never overwrites an existing one:
 
 ```bash
 cd $REPO
-uv run --group matrix python - <RUN_DIR> <<'EOF'
-import json, os, sys
-from datetime import datetime
-from pathlib import Path
-import pyarrow.parquet as pq
-sys.path.insert(0, "scripts/matrix")
-from utils.ingest import read_samples
-from utils.schema import LONG, conform
-from cabench.harness.pins import TaskPin
-
-run_dir = Path(sys.argv[1])
-m = json.loads((run_dir / "manifest.json").read_text())
-if m["limit"] is not None:
-    sys.exit(f"limit={m['limit']}: smoke runs don't go in the data store")
-data = Path("/scratch") / os.environ["USER"] / "data"
-for t in m["tasks"]:
-    task = TaskPin(**t)
-    long_df, _ = read_samples(
-        run_dir / task.name / "samples.jsonl",
-        task=task.benchmark, benchmark=task.benchmark,
-        benchmark_version=m["benchmark_versions"][task.name],
-        run_id=m["run_id"], source="own",
-        model_id=m["model"]["repo"], model_revision=m["model"]["sha"],
-        config_id=m["config_id"], harness_commit=m["harness"]["lm_eval_sha"],
-        metric="acc", timestamp=datetime.fromisoformat(m["runtime"]["utc_time"]),
-    )
-    out = data / "long" / task.benchmark / f"own_{m['run_id']}.parquet"
-    if out.exists():
-        sys.exit(f"{out} already exists")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(conform(long_df, LONG, "long"), out)
-    print(f"{task.benchmark}: {len(long_df)} rows, mean correct {long_df['correct'].mean():.4f} -> {out}")
-EOF
+uv run --group matrix python scripts/matrix/ingest_own.py <RUN_DIR> --data $DATA
 ```
 
 Then rebuild the side tables and matrices and run the schema check:
@@ -560,18 +489,21 @@ multiple-choice tasks) and judges the result.
 | `PinMismatch: lm_eval working tree` | Files changed or added in the checkout | Restore them, or add build files to `.git/info/exclude` |
 | `PinMismatch: lockfile_sha256` | `uv.lock` changed since the config was made | Restore `uv.lock`, or make a new config |
 | `PinMismatch: lm_eval is imported from …` | `lm_eval` loaded from somewhere other than the checkout | Reinstall with `pip install -e $FORK` in the venv; deactivate conda |
+| `PinMismatch: transformers_version` | The venv or image has a different transformers | Make a new config with the printed version |
+| `NameError: name 'LLM' is not defined` | A `backend: vllm` config (see Known issues) | Use an `hf` config |
 | `ConfigError: … does not match its contents` | The config was edited | Restore it, or save the change under its new hashed name |
 | `sandbox is from …, config pins …` | Sandbox built from a different `.sif` | Rebuild the sandbox (1.5) |
 | Login-node job ends without finishing | Login nodes stop heavy CPU work | Run heavy steps as Slurm jobs |
 
 ## Known issues
 
-- **`read_samples` fails on MMLU-Pro.** At the pinned lm-eval commit, `target` in the samples
-  file is the answer letter (`"A"`–`"J"`), but `read_samples` does `int(rec["target"])`.
-  It also writes `pred` as an index (`"3"`) where public rows use a letter (`"D"`). Fix in
-  `scripts/matrix/utils/ingest.py` before ingesting any own run.
-- **Backend.** Own runs use vLLM; the leaderboard used HF transformers. Test 1 measures the
-  combined effect of this and the lm-eval commit difference.
+- **The pinned fork's vLLM backend doesn't work with vLLM 0.32.0.** `vllm_causallms.py`
+  imports `ray` (not installed) and `vllm.transformers_utils.tokenizer` (removed in 0.32.0)
+  inside a `try` that swallows the error, then calls `LLM.generate(prompt_token_ids=...)`,
+  which 0.32.0 no longer accepts. Configs therefore use `backend: hf`, as the leaderboard did.
+  `mmlu_pro-610fb464753b.yaml` (vLLM) is kept but can't run.
+- **Backend and lm-eval commit.** Own runs use HF transformers 5.x at fork commit `e5a9872c`;
+  the leaderboard used an older transformers at `d4631ea6`. Test 1 measures the combined effect.
 - **Public rows' `config_id`** is the placeholder `openllm_v2_public`, which matches no config
   file, so public rows fail the schema check's config test.
 - **Not covered by the pins:** the venv (recorded in `ctr-venv-freeze.txt` only) and the sandbox
