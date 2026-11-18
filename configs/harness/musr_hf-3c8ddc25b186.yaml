@@ -1,0 +1,37 @@
+harness:
+  lm_eval_repo: https://github.com/huggingface/lm-evaluation-harness
+  lm_eval_sha: e5a9872c7f6e43057958dc3d3ecdccb3bb51fba0
+  vllm_version: 0.32.0
+  dtype: bfloat16
+  batch_size: 32
+  apply_chat_template: false
+  lockfile_sha256: 6815b4cae4c40046f8bd7adf66981c1dd96f8a20837ee5d5c057c4ffc622bc05
+  apptainer_digest: 473f81faa4e338f3a43a1af72bd0af62dfee0ebecc3b8b7bd9b0e4f71ce9424b
+  backend: hf
+  transformers_version: "5.20.1"
+
+tasks:
+  - name: leaderboard_musr_murder_mysteries_pinned
+    yaml_version: "1.0"
+    dataset_repo: TAUR-Lab/MuSR
+    dataset_sha: 7c365b439a222150f317764d4f16ae6c96d7d94a
+    num_fewshot: 0
+    fewshot_seed: 1234
+    max_gen_toks: null
+    benchmark: leaderboard_musr
+  - name: leaderboard_musr_object_placements_pinned
+    yaml_version: "1.0"
+    dataset_repo: TAUR-Lab/MuSR
+    dataset_sha: 7c365b439a222150f317764d4f16ae6c96d7d94a
+    num_fewshot: 0
+    fewshot_seed: 1234
+    max_gen_toks: null
+    benchmark: leaderboard_musr
+  - name: leaderboard_musr_team_allocation_pinned
+    yaml_version: "1.0"
+    dataset_repo: TAUR-Lab/MuSR
+    dataset_sha: 7c365b439a222150f317764d4f16ae6c96d7d94a
+    num_fewshot: 0
+    fewshot_seed: 1234
+    max_gen_toks: null
+    benchmark: leaderboard_musr

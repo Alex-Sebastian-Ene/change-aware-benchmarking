@@ -299,6 +299,7 @@ pinned revisions into `HF_HOME`, so offline compute nodes can read them.
    ```
 
    For any other model, use the full 40-character commit from the model's Hub page.
+   Add the model and its commit to `configs/models.csv` (see 5.3).
 
 2. Fill the cache with a two-question CPU run inside the container:
 
@@ -395,13 +396,30 @@ Every submission is a separate run with its own `run_id`, so submitting the same
 gives the repeat needed for the noise test. Check on jobs with `squeue -u $USER` and
 `tail -f /scratch/$USER/eval_logs/eval-<jobid>.log`.
 
-For many models, write one `repo sha` pair per line in `models.txt` and submit one job each:
+For many models, list them in `configs/models.csv` (committed, so every model's pinned
+revision is recorded in one place), with the header `repo,sha` and one model per line:
+
+```
+repo,sha
+Qwen/Qwen2.5-0.5B,2630d3d2321bc1f1878f702166d1b2af019a7310
+```
+
+Use the full 40-character commit from Part 4, step 1. Then submit one job per model with one
+command:
 
 ```bash
-while read repo sha; do
-  sbatch --export=ALL,MODEL_REPO=$repo,MODEL_SHA=$sha,CONFIG=configs/harness/<config>.yaml scripts/slurm/eval.sbatch
-done < models.txt
+scripts/slurm/submit_all.sh configs/harness/<config>.yaml
 ```
+
+It prints `<repo>@<sha[:12]>: Submitted batch job <id>` for each model. Optional arguments:
+
+- a different model list: `scripts/slurm/submit_all.sh <config> configs/<other>.csv`
+- extra `sbatch --export` variables, e.g. a smoke run of every model:
+  `scripts/slurm/submit_all.sh <config> configs/models.csv LIMIT=20,OUT=/scratch/$USER/eval_smoke`
+
+It stops if the config doesn't exist or the CSV doesn't start with `repo,sha`, and skips blank
+lines. It doesn't check the shas: `run_eval.py` rejects one that isn't a full 40-character
+commit when the job starts.
 
 Run Part 4 for each model on the login node first.
 
