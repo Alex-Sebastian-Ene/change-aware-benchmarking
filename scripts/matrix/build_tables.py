@@ -26,7 +26,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from utils.item_id import make_item_id   # same rule as ingest_public.py
+from utils.ingest import BENCHMARKS, read_details, read_items   # as ingest_public.py
 
 ITEMS_SCHEMA = pa.schema([
     ("item_id", pa.string()),
@@ -50,39 +50,38 @@ MODELS_SCHEMA = pa.schema([
 
 
 # ---------------------------------------------------------------------------
-# Items: built from the published questions, with the same ID rule and the same
-# de-duplication as the long table (lowest question_id of identical pairs).
+# Items: built from the published questions with utils/ingest.py's read_items, so
+# the ID rule and de-duplication (lowest source index of identical items) are the
+# same code that built the long table's rows.
 # ---------------------------------------------------------------------------
-def mmlu_pro_items(raw_root: Path, version: str) -> pd.DataFrame:
+def public_items(raw_root: Path, benchmark: str, version: str) -> pd.DataFrame:
     """
     Args:
         raw_root (Path): download_details.py output folder (one subfolder per model).
+        benchmark (str): A key of BENCHMARKS (utils/ingest.py), e.g. "leaderboard_musr".
         version (str): benchmark_version, as used in the long table's item IDs.
 
     Returns:
-        pd.DataFrame: One row per unique item, columns in ITEMS_SCHEMA order.
+        pd.DataFrame: One row per unique item, columns in ITEMS_SCHEMA order: tasks in
+        BENCHMARKS order, ascending source index within each (question_id for MMLU-Pro,
+        as before). This order sets the matrix columns. Any model's details file has
+        every question, so the first model found is used for each task.
     """
-    task = "leaderboard_mmlu_pro"
-    files = sorted(raw_root.glob(f"*/*__{task}.parquet"))
-    if not files:
-        sys.exit(f"no {task} files under {raw_root}")
-    raw = pd.read_parquet(files[0], columns=["doc", "target"])
-    docs = list(raw["doc"])
-    items = pd.DataFrame({
-        "item_id": [make_item_id(task, version, d["question"], [str(o) for o in d["options"]]) for d in docs],
-        "benchmark": task,
-        "benchmark_version": version,
-        "subtask": [d.get("category") for d in docs],
-        "qid": [int(d["question_id"]) for d in docs],
-        "answer_key": [str(t).strip() for t in raw["target"]],
-        "ref_prompt_tokens": pd.array([pd.NA] * len(docs), dtype="Int32"),
-    })
-    items = (items.sort_values("qid").drop_duplicates("item_id", keep="first").reset_index(drop=True))
-    items["source_index"] = items.pop("qid").astype(str)
+    parts = []
+    for task in BENCHMARKS[benchmark].tasks:
+        files = sorted(raw_root.glob(f"*/*__{task}.parquet"))
+        if not files:
+            sys.exit(f"no {task} files under {raw_root}; run download_details.py for it")
+        items = read_items(read_details(files[0]), task=task, benchmark=benchmark,
+                           benchmark_version=version)
+        # matrix columns follow this order: ascending source index within each task
+        parts.append(items.iloc[items["source_index"].astype(int).argsort(kind="stable")])
+    items = pd.concat(parts, ignore_index=True)
+    dup = items["item_id"].duplicated()
+    if dup.any():
+        sys.exit(f"{benchmark}: {dup.sum()} item_ids appear in more than one task")
+    items["ref_prompt_tokens"] = pd.array([pd.NA] * len(items), dtype="Int32")
     return items[ITEMS_SCHEMA.names]
-
-
-ITEM_BUILDERS = {"leaderboard_mmlu_pro": mmlu_pro_items}
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +190,9 @@ def main() -> None:
 
     parts = []
     for (bench, version), _ in long.groupby(["benchmark", "benchmark_version"]):
-        if bench not in ITEM_BUILDERS:
-            sys.exit(f"no items builder for {bench} yet")
-        parts.append(ITEM_BUILDERS[bench](raw_root, version))
+        if bench not in BENCHMARKS:
+            sys.exit(f"{bench} isn't in BENCHMARKS (utils/ingest.py); add it there")
+        parts.append(public_items(raw_root, bench, version))
     items = pd.concat(parts, ignore_index=True)
     missing = set(long["item_id"]) - set(items["item_id"])
     if missing:

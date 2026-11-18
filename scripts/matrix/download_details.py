@@ -13,6 +13,7 @@ import argparse
 import json
 from pathlib import Path
 
+import pyarrow.parquet as pq
 from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
 
 
@@ -41,6 +42,8 @@ def main() -> None:
 
     Returns:
         None. Writes one Parquet file per task config plus manifest.json per model.
+        manifest.json keeps the entries of earlier downloads, so fetching one task
+        doesn't drop another task's entry (ingest_public.py needs both).
     """
     ap = argparse.ArgumentParser()
     ap.add_argument("models", nargs="+", help="Hub model names, e.g. Qwen/Qwen2.5-0.5B")
@@ -67,12 +70,20 @@ def main() -> None:
 
         model_dir = out_root / safe
         model_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = model_dir / "manifest.json"
         manifest = {"model": model, "repo": repo, "configs": {}}
+        if manifest_path.exists():
+            manifest["configs"] = json.loads(manifest_path.read_text()).get("configs", {})
 
         for cfg in task_cfgs:
             dest = model_dir / f"{cfg}.parquet"
             if dest.exists():
                 print(f"  skip (already have) {cfg}")
+                if cfg not in manifest["configs"]:  # lost by an older version of this script
+                    split, all_splits = pick_split(repo, cfg)
+                    manifest["configs"][cfg] = {"split_used": split, "all_splits": all_splits,
+                                                "rows": pq.read_metadata(dest).num_rows}
+                    print(f"    restored its manifest entry (split {split})")
                 continue
             split, all_splits = pick_split(repo, cfg)
             ds = load_dataset(repo, name=cfg, split=split)
@@ -80,11 +91,12 @@ def main() -> None:
             manifest["configs"][cfg] = {"split_used": split, "all_splits": all_splits, "rows": ds.num_rows}
             print(f"  {cfg}: {ds.num_rows} rows  (split {split})")
 
-        with open(model_dir / "manifest.json", "w") as f:
+        with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
-        if task_cfgs and manifest["configs"]:
-            first = next(iter(manifest["configs"]))
+        new = [c for c in task_cfgs if c in manifest["configs"]]
+        if new:
+            first = new[0]
             ds = load_dataset("parquet", data_files=str(model_dir / f"{first}.parquet"), split="train")
             print(f"\n  columns in {first}: {ds.column_names}")
             row = {k: (str(v)[:150]) for k, v in ds[0].items()}

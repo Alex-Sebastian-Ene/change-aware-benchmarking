@@ -19,15 +19,10 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from utils.ingest import read_samples  # noqa: E402
+from utils.ingest import BENCHMARKS, read_samples  # noqa: E402
 from utils.schema import LONG, conform  # noqa: E402
 
 PINNED_SUFFIX = "_pinned"
-# benchmark -> the lm-eval metric that gives `correct`, as the leaderboard scored it
-METRIC = {
-    "leaderboard_mmlu_pro": "acc",
-    "leaderboard_musr": "acc_norm",
-}
 
 
 def main() -> int:
@@ -47,8 +42,8 @@ def main() -> int:
     # read everything before writing anything, so a bad task leaves no partial output
     outputs = []
     for benchmark, tasks in by_benchmark.items():
-        if benchmark not in METRIC:
-            sys.exit(f"no metric for {benchmark}; add it to METRIC")
+        if benchmark not in BENCHMARKS:
+            sys.exit(f"{benchmark} isn't in BENCHMARKS (utils/ingest.py); add it there")
         versions = {m["benchmark_versions"][t["name"]] for t in tasks}
         if len(versions) != 1:
             sys.exit(f"{benchmark}: subtasks report different versions {sorted(versions)}")
@@ -62,7 +57,7 @@ def main() -> int:
                 run_id=m["run_id"], source="own",
                 model_id=m["model"]["repo"], model_revision=m["model"]["sha"],
                 config_id=m["config_id"], harness_commit=m["harness"]["lm_eval_sha"],
-                metric=METRIC[benchmark],
+                metric=BENCHMARKS[benchmark].metric,
                 timestamp=datetime.fromisoformat(m["runtime"]["utc_time"]),
             )
             mean = long_df["correct"].mean()
