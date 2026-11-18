@@ -43,7 +43,7 @@ def main() -> int:
         from lm_eval.tasks import TaskManager
 
         verify_harness(config.harness, a.lm_eval_dir, a.lockfile, a.sif)
-        tm = TaskManager(include_path=str(TASK_DIR))
+        tm = TaskManager(verbosity="WARNING", include_path=str(TASK_DIR))
         for t in config.tasks:
             verify_task(t, tm)
         print("PINS_OK")

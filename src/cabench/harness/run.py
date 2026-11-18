@@ -55,7 +55,7 @@ def run(
 
     harness = config.harness
     verify_harness(harness, lm_eval_dir, lockfile, sif)
-    task_manager = TaskManager(include_path=str(task_dir))
+    task_manager = TaskManager(verbosity="WARNING", include_path=str(task_dir))
     for t in config.tasks:
         verify_task(t, task_manager)
 
