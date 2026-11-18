@@ -97,3 +97,138 @@ def test_target_as_index_or_letter(tmp_path, target):
 def test_target_letter_picks_its_choice(tmp_path):
     long, _ = read(write_samples(tmp_path / "s.jsonl", [(1, "q1", 0)], target="B"))
     assert long["logprob"].tolist() == [-1.5]
+
+
+# --- MuSR: text targets, acc_norm, doc_id as source index, subtasks sharing a benchmark ---
+
+MUSR = "leaderboard_musr"
+
+
+def write_musr(path: Path, docs: list[tuple[str, list[str], int, float]], resps=None) -> Path:
+    """One lm-eval MuSR sample per (narrative, choices, answer_index, acc_norm), in file order.
+
+    Shaped like the leaderboard's details: choices stored as a string, target = answer text.
+    """
+    with open(path, "w") as f:
+        for doc_id, (narrative, choices, answer, acc_norm) in enumerate(docs):
+            doc = {
+                "narrative": narrative,
+                "question": "Who is the most likely murderer?",
+                "choices": str(choices),
+                "answer_index": answer,
+                "answer_choice": choices[answer],
+            }
+            lps = resps or [-1.0 - i for i in range(len(choices))]
+            rec = {
+                "doc_id": doc_id,
+                "doc": doc,
+                "target": choices[answer],
+                "resps": [[[str(lp), "False"]] for lp in lps],
+                "acc_norm": acc_norm,
+            }
+            f.write(json.dumps(rec) + "\n")
+    return path
+
+
+def read_musr(path: Path, subtask: str = "murder_mysteries"):
+    return read_samples(
+        path,
+        task=f"{MUSR}_{subtask}",
+        benchmark=MUSR,
+        benchmark_version="1.0",
+        run_id="run",
+        source="own",
+        model_id="org/model",
+        model_revision="a" * 40,
+        config_id=CFG,
+        harness_commit="h" * 40,
+        metric="acc_norm",
+        timestamp=T1,
+    )
+
+
+def test_musr_text_target_and_items(tmp_path):
+    docs = [("story one", ["Mackenzie", "Ana"], 1, 0.0), ("story two", ["Bo", "Cy"], 0, 1.0)]
+    long, items = read_musr(write_musr(tmp_path / "s.jsonl", docs))
+
+    assert long["logprob"].tolist() == [-2.0, -1.0]  # the gold choice's log-probability
+    assert long["correct"].tolist() == [0, 1]
+    assert items["answer_key"].tolist() == ["1", "0"]
+    assert items["subtask"].tolist() == ["murder_mysteries"] * 2
+    assert items["source_index"].tolist() == ["0", "1"]  # doc_id: MuSR has no ID column
+    conform(long, LONG, "long")
+
+
+def test_musr_same_question_different_narrative_is_two_items(tmp_path):
+    docs = [("story one", ["A1", "B1"], 0, 1.0), ("story two", ["A1", "B1"], 0, 1.0)]
+    long, _ = read_musr(write_musr(tmp_path / "s.jsonl", docs))
+    assert long["item_id"].nunique() == 2
+
+
+def test_acc_norm_pred_divides_by_choice_length(tmp_path):
+    # raw argmax picks "Al" (-2.0 > -3.0); per character, "Bartholomew" wins (-3/11 > -2/2)
+    docs = [("story", ["Al", "Bartholomew"], 1, 1.0)]
+    long, _ = read_musr(write_musr(tmp_path / "s.jsonl", docs, resps=[-2.0, -3.0]))
+    assert long["pred"].tolist() == ["B"]
+
+
+def test_musr_answer_that_looks_like_a_letter(tmp_path):
+    # "X" is a capital letter, but for MuSR the target is always the answer text
+    long, _ = read_musr(write_musr(tmp_path / "s.jsonl", [("story", ["X", "Y"], 1, 1.0)]))
+    assert long["logprob"].tolist() == [-2.0]
+
+
+def test_musr_target_not_in_choices_is_an_error(tmp_path):
+    path = write_musr(tmp_path / "s.jsonl", [("story", ["X", "Y"], 0, 1.0)])
+    path.write_text(path.read_text().replace('"target": "X"', '"target": "Z"'))
+    with pytest.raises(ValueError, match="not one of the choices"):
+        read_musr(path)
+
+
+def test_mmlu_pro_letters_unaffected_by_choice_text(tmp_path):
+    # an option whose text is "B" must not change how MMLU-Pro's letter target is read
+    path = tmp_path / "s.jsonl"
+    rec = {
+        "doc_id": 0,
+        "doc": {"question_id": 1, "question": "q", "options": ["B", "y"], "answer": "B",
+                "category": "math"},
+        "target": "B",
+        "resps": [[["-0.5", True]], [["-1.5", False]]],
+        "acc": 0,
+    }
+    path.write_text(json.dumps(rec) + "\n")
+    long, _ = read(path)
+    assert long["logprob"].tolist() == [-1.5]
+
+
+def test_ingest_own_writes_one_file_per_benchmark(tmp_path):
+    import subprocess
+
+    run = tmp_path / "run"
+    tasks = []
+    for i, s in enumerate(("murder_mysteries", "team_allocation")):
+        name = f"{MUSR}_{s}_pinned"
+        (run / name).mkdir(parents=True)
+        write_musr(run / name / "samples.jsonl", [(f"{s} story {i}", ["X", "Y"], 0, 1.0)])
+        tasks.append({"name": name, "benchmark": MUSR})
+    manifest = {
+        "limit": None, "run_id": "r" * 64, "config_id": CFG, "tasks": tasks,
+        "benchmark_versions": {t["name"]: "1.0" for t in tasks},
+        "model": {"repo": "org/model", "sha": "a" * 40},
+        "harness": {"lm_eval_sha": "h" * 40},
+        "runtime": {"utc_time": T1.isoformat()},
+    }
+    (run / "manifest.json").write_text(json.dumps(manifest))
+
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run(
+        [sys.executable, str(root / "scripts/matrix/ingest_own.py"), str(run),
+         "--data", str(tmp_path / "data")],
+        check=True, capture_output=True, text=True,
+        env={**__import__("os").environ, "PYTHONPATH": str(root / "src")},
+    )
+    out = list((tmp_path / "data/long").rglob("*.parquet"))
+    assert [p.relative_to(tmp_path / "data/long").as_posix() for p in out] == [
+        f"{MUSR}/own_{'r' * 64}.parquet"
+    ]
+    assert len(pd.read_parquet(out[0])) == 2

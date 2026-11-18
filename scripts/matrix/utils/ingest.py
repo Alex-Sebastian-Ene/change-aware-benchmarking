@@ -6,18 +6,22 @@ and one key per metric (acc, acc_norm, exact_match, ...).
 
 Each benchmark stores its question and choices under different `doc` fields,
 so the content used for the item ID is pulled by a small per-task extractor.
-MMLU-Pro is filled in as the worked example; the rest are TODO and must be
-checked against the doc fields at the pinned harness commit before use.
+MMLU-Pro and MuSR are filled in; the rest are TODO and must be checked against
+the doc fields at the pinned harness commit before use. EXTRACTORS is keyed by
+lm-eval task name (without the _pinned suffix), so a benchmark made of several
+subtasks has one entry per subtask.
 
 Identical questions get the same item ID. As in ingest_public.py, only the one
 with the lowest source index is kept, so public and own runs keep the same copy.
 """
 from __future__ import annotations
 
+import ast
 import json
 import string
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 import pandas as pd
@@ -26,7 +30,8 @@ from .item_id import make_item_id
 from .schema import SCHEMA_VERSION
 
 # task -> fn(doc) -> (question, choices, answer_key, subtask, source_index)
-Extractor = Callable[[dict], tuple[str, list[str], str, str, int]]
+# source_index None = the dataset has no ID column; the sample's doc_id is used instead.
+Extractor = Callable[[dict], tuple[str, list[str], str, str, int | None]]
 
 
 def _mmlu_pro(doc: dict):
@@ -42,10 +47,34 @@ def _mmlu_pro(doc: dict):
             int(doc["question_id"]))
 
 
+def _musr(doc: dict, subtask: str):
+    """
+    Args:
+        doc (dict): The sample's "doc" entry.
+        subtask (str): The MuSR split, e.g. "murder_mysteries"; the doc doesn't record it.
+
+    Returns:
+        tuple[str, list[str], str, str, None]: (question, choices, answer_key, subtask,
+        None). The question alone repeats ("Who is the most likely murderer?"), so the
+        narrative is part of it. MuSR stores choices as a string of a Python list. It has
+        no ID column, so source_index is None and read_samples uses doc_id.
+    """
+    return (doc["narrative"] + "\n\n" + doc["question"], ast.literal_eval(doc["choices"]),
+            str(doc["answer_index"]), subtask, None)
+
+
+MUSR_SUBTASKS = ("murder_mysteries", "object_placements", "team_allocation")
+
 EXTRACTORS: dict[str, Extractor] = {
     "leaderboard_mmlu_pro": _mmlu_pro,
+    **{f"leaderboard_musr_{s}": partial(_musr, subtask=s) for s in MUSR_SUBTASKS},
     # TODO: more benchmarks
 }
+
+# Tasks whose doc_to_target is the answer text (MuSR: `answer_choice`), so lm-eval logs
+# `target` as that text. Listed explicitly rather than guessed from the value, because
+# an answer text can look like a letter or digit ("A", "3").
+TEXT_TARGET_TASKS = frozenset(f"leaderboard_musr_{s}" for s in MUSR_SUBTASKS)
 
 LOGLIK_METRICS = ("acc_norm", "acc")
 LETTERS = string.ascii_uppercase  # as in ingest_public.py: pred is stored as a letter
@@ -56,6 +85,7 @@ def _gold_index(target) -> int:
 
     lm-eval logs `target` as doc_to_target returns it: an int for most tasks, but the
     answer letter ("A"-"J") for MMLU-Pro, whose doc_to_target is the `answer` field.
+    Tasks in TEXT_TARGET_TASKS log the answer text instead and don't come here.
     """
     if isinstance(target, int) and not isinstance(target, bool):
         return target
@@ -102,7 +132,8 @@ def read_samples(
     """
     Args:
         path (str | Path): The samples_<task>_<timestamp>.jsonl file.
-        task (str): lm-eval task name; selects the extractor in EXTRACTORS.
+        task (str): lm-eval task name without the _pinned suffix; selects the
+            extractor in EXTRACTORS.
         benchmark (str): Benchmark name for the item ID and long table.
         benchmark_version (str): Benchmark version for the item ID and long table.
         run_id (str): ID of this run.
@@ -112,7 +143,9 @@ def read_samples(
         config_id (str): ID of the pinned harness config used.
         harness_commit (str): lm-eval commit hash.
         metric (str): Metric key giving `correct`; a GEN_METRICS entry marks the
-            task as generative (no logprob, pred is the generated text).
+            task as generative (no logprob, pred is the generated text). For
+            "acc_norm", pred is chosen as lm-eval does: each log-probability divided
+            by its choice's length in characters.
         timestamp (datetime): When the run happened, with a timezone, e.g.
             datetime.fromisoformat(manifest["runtime"]["utc_time"]). The earliest run of
             a model and config becomes its matrix row, so this must be the run's time,
@@ -136,6 +169,8 @@ def read_samples(
     for line in Path(path).read_text().splitlines():
         rec = json.loads(line)
         q, choices, answer, subtask, source_index = extract(rec["doc"])
+        if source_index is None:
+            source_index = int(rec["doc_id"])
         iid = make_item_id(benchmark, benchmark_version, q, choices)
         generative = metric in GEN_METRICS
 
@@ -146,9 +181,23 @@ def read_samples(
             gen_tokens = count_tokens(pred) if (count_tokens and pred) else 0
         else:
             lps = [float(r[0][0]) for r in rec["resps"]]
-            gold = _gold_index(rec["target"])
+            if task in TEXT_TARGET_TASKS:
+                if str(rec["target"]) not in choices:
+                    raise ValueError(f"doc {rec.get('doc_id')}: target {rec['target']!r} "
+                                     f"is not one of the choices {choices}")
+                gold = choices.index(str(rec["target"]))
+            else:
+                gold = _gold_index(rec["target"])
             logprob = lps[gold]
-            pred = LETTERS[max(range(len(lps)), key=lps.__getitem__)]
+            # acc_norm compares log-probabilities per character of the choice
+            # (lm_eval/api/task.py at the pinned commit), so pred must too, or it
+            # can disagree with `correct`. These are the choices lm-eval scored only
+            # when the extractor returns doc_to_choice's list, as _musr does.
+            if metric == "acc_norm":
+                scores = [lp / len(c) for lp, c in zip(lps, choices, strict=True)]
+            else:
+                scores = lps
+            pred = LETTERS[max(range(len(scores)), key=scores.__getitem__)]
 
         prompt = rec["arguments"][0][0] if rec.get("arguments") else None
         long_rows.append(dict(

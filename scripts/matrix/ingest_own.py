@@ -2,7 +2,8 @@
 
     uv run --group matrix python scripts/matrix/ingest_own.py <RUN_DIR> [--data DIR]
 
-Writes <data>/long/<benchmark>/own_<run_id>.parquet per task and never overwrites one.
+Writes <data>/long/<benchmark>/own_<run_id>.parquet per benchmark and never overwrites one.
+Subtasks that share a benchmark (the three MuSR tasks) go into the same file.
 Smoke runs (manifest limit set) are refused.
 """
 
@@ -10,14 +11,23 @@ import argparse
 import json
 import os
 import sys
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from utils.ingest import read_samples  # noqa: E402
 from utils.schema import LONG, conform  # noqa: E402
+
+PINNED_SUFFIX = "_pinned"
+# benchmark -> the lm-eval metric that gives `correct`, as the leaderboard scored it
+METRIC = {
+    "leaderboard_mmlu_pro": "acc",
+    "leaderboard_musr": "acc_norm",
+}
 
 
 def main() -> int:
@@ -30,23 +40,48 @@ def main() -> int:
     if m["limit"] is not None:
         sys.exit(f"limit={m['limit']}: smoke runs don't go in the data store")
 
+    by_benchmark = defaultdict(list)
     for t in m["tasks"]:
-        benchmark = t["benchmark"]
-        long_df, _ = read_samples(
-            a.run_dir / t["name"] / "samples.jsonl",
-            task=benchmark, benchmark=benchmark,
-            benchmark_version=m["benchmark_versions"][t["name"]],
-            run_id=m["run_id"], source="own",
-            model_id=m["model"]["repo"], model_revision=m["model"]["sha"],
-            config_id=m["config_id"], harness_commit=m["harness"]["lm_eval_sha"],
-            metric="acc", timestamp=datetime.fromisoformat(m["runtime"]["utc_time"]),
-        )
+        by_benchmark[t["benchmark"]].append(t)
+
+    # read everything before writing anything, so a bad task leaves no partial output
+    outputs = []
+    for benchmark, tasks in by_benchmark.items():
+        if benchmark not in METRIC:
+            sys.exit(f"no metric for {benchmark}; add it to METRIC")
+        versions = {m["benchmark_versions"][t["name"]] for t in tasks}
+        if len(versions) != 1:
+            sys.exit(f"{benchmark}: subtasks report different versions {sorted(versions)}")
+        (version,) = versions
+        parts = []
+        for t in tasks:
+            long_df, _ = read_samples(
+                a.run_dir / t["name"] / "samples.jsonl",
+                task=t["name"].removesuffix(PINNED_SUFFIX), benchmark=benchmark,
+                benchmark_version=version,
+                run_id=m["run_id"], source="own",
+                model_id=m["model"]["repo"], model_revision=m["model"]["sha"],
+                config_id=m["config_id"], harness_commit=m["harness"]["lm_eval_sha"],
+                metric=METRIC[benchmark],
+                timestamp=datetime.fromisoformat(m["runtime"]["utc_time"]),
+            )
+            mean = long_df["correct"].mean()
+            print(f"  {t['name']}: {len(long_df)} rows, mean correct {mean:.4f}")
+            parts.append(long_df)
+        long_df = pd.concat(parts, ignore_index=True)
+        dup = long_df["item_id"].duplicated()
+        if dup.any():
+            sys.exit(f"{benchmark}: {dup.sum()} item_ids appear in more than one subtask")
         out = a.data / "long" / benchmark / f"own_{m['run_id']}.parquet"
         if out.exists():
             sys.exit(f"{out} already exists")
+        outputs.append((benchmark, long_df, out))
+
+    for benchmark, long_df, out in outputs:
         out.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(conform(long_df, LONG, "long"), out)
-        print(f"{benchmark}: {len(long_df)} rows, mean correct {long_df['correct'].mean():.4f} -> {out}")
+        mean = long_df["correct"].mean()
+        print(f"{benchmark}: {len(long_df)} rows, mean correct {mean:.4f} -> {out}")
     return 0
 
 
