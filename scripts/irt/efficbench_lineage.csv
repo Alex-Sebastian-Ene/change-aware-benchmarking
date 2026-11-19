@@ -1,0 +1,126 @@
+child,parent,evidence,use
+NousResearch/Nous-Hermes-2-Yi-34B,01-ai/Yi-34B,hub base_model,fine-tuned
+Intel/neural-chat-7b-v3-3,Intel/neural-chat-7b-v3-1,hub base_model,fine-tuned
+one-man-army/una-neural-chat-v3-3-P1-OMA,Intel/neural-chat-7b-v3-3,hub base_model,fine-tuned
+Mihaiii/Pallas-0.5-LASER-0.1,Mihaiii/Pallas-0.5,hub base_model,fine-tuned
+Mihaiii/Pallas-0.5-LASER-exp2-0.1,Mihaiii/Pallas-0.5,hub base_model,fine-tuned
+Mihaiii/Pallas-0.5-LASER-0.4,Mihaiii/Pallas-0.5-LASER-0.3,hub base_model,fine-tuned
+ehartford/Samantha-1.11-CodeLlama-34b,NousResearch/CodeLlama-34b-hf,parent named in child,fine-tuned
+ehartford/WizardLM-1.0-Uncensored-CodeLlama-34b,NousResearch/CodeLlama-34b-hf,parent named in child,fine-tuned
+argilla/notus-7b-v1,alignment-handbook/zephyr-7b-sft-full,hub base_model,fine-tuned
+qblocks/codellama_7b_DolphinCoder,codellama/CodeLlama-7b-hf,hub base_model,fine-tuned
+OpenBuddyEA/openbuddy-llama-30b-v7.1-bf16,huggingface/llama-30b,parent named in child,fine-tuned
+upstage/llama-65b-instruct,huggingface/llama-65b,parent named in child,fine-tuned
+DevaMalla/llama_7b_lora,huggingface/llama-7b,parent named in child,fine-tuned
+DevaMalla/llama_7b_qlora_pds-eval,huggingface/llama-7b,parent named in child,fine-tuned
+ausboss/llama7b-wizardlm-unfiltered,huggingface/llama-7b,parent named in child,fine-tuned
+Aspik101/vicuna-13b-v1.5-PL-lora_unload,lmsys/vicuna-13b-v1.5,parent named in child,fine-tuned
+Charlie911/vicuna-7b-v1.5-lora-mctaco-modified1,lmsys/vicuna-7b-v1.5,parent named in child,fine-tuned
+Charlie911/vicuna-7b-v1.5-lora-mixed-datasets-time-unit,lmsys/vicuna-7b-v1.5,parent named in child,fine-tuned
+Charlie911/vicuna-7b-v1.5-lora-timedial,lmsys/vicuna-7b-v1.5,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-FINETUNE1_17w-r4,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-FINETUNE3_3.3w-r16-gate_up_down,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-FINETUNE3_3.3w-r8-gate_up_down,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-FINETUNE4_3.8w-r8-q_k_v_o,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-FINETUNE4_3.8w-r8-q_k_v_o_gate_up_down,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-FINETUNE5_4w-r4-q_k_v_o,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-huangyt_FINETUNE2_3w,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+CHIH-HUNG/llama-2-13b-huangyt_Fintune_1_17w-q_k_v_o_proj,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+Expert68/llama2_13b_instructed_version2,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+Secbone/llama-2-13B-instructed,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+Undi95/Llama2-13B-no_robots-alpaca-lora,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+YeungNLP/firefly-llama2-13b-v1.2,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+elyza/ELYZA-japanese-Llama-2-13b-instruct,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+lu-vae/llama2-13B-sharegpt4-orca-openplatypus-8w,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+pe-nlp/llama-2-13b-platypus-vicuna-wizard,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+rameshm/llama-2-13b-mathgpt-v4,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+rombodawg/LosslessMegaCoder-llama2-13b-mini,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+shareAI/bimoGPT-llama2-13b,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+wei123602/llama2-13b-FINETUNE3_TEST,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+zyh3826/llama2-13b-ft-openllm-leaderboard-v1,meta-llama/Llama-2-13b-hf,parent named in child,fine-tuned
+OpenAssistant/llama2-70b-oasst-sft-v10,meta-llama/Llama-2-70b-hf,parent named in child,fine-tuned
+Harshvir/Llama-2-7B-physics,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+beaugogh/Llama2-7b-openorca-mc-v2-dpo,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+clibrain/Llama-2-7b-ft-instruct-es,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+davzoku/cria-llama2-7b-v1.3,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+maximuslee07/llama-2-7b-rockwell-final,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+mncai/Llama2-7B-guanaco-1k,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+rombodawg/LosslessMegaCoder-llama2-7b-mini,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+togethercomputer/Llama-2-7B-32K-Instruct,meta-llama/Llama-2-7b-hf,parent named in child,fine-tuned
+Locutusque/Orca-2-13B-no_robots,microsoft/Orca-2-13b,hub base_model,fine-tuned
+Locutusque/Orca-2-13b-SFT-v6,microsoft/Orca-2-13b,hub base_model,fine-tuned
+Mihaiii/Pallas-0.2,migtissera/Tess-34B-v1.4,hub base_model,fine-tuned
+Dans-DiscountModels/Dans-07YahooAnswers-7b,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+HenryJJ/Instruct_Mistral-7B-v0.1_Dolly15K,mistralai/Mistral-7B-v0.1,parent named in child,fine-tuned
+HuggingFaceH4/zephyr-7b-beta,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+Intel/neural-chat-7b-v3-1,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+Locutusque/Rhino-Mistral-7B,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+PocketDoc/Dans-AdventurousWinds-7b,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+TokenBender/pic_7B_mistral_Full_v0.1,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+Zangs3011/mistral_7b_DolphinCoder,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+abacusai/Fewshot-Metamath-OrcaVicuna-Mistral,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+abdulrahman-nuzha/finetuned-Mistral-5000-v1.0,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+acrastt/kalomaze-stuff,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+akjindal53244/Mistral-7B-v0.1-Open-Platypus,mistralai/Mistral-7B-v0.1,parent named in child,fine-tuned
+alignment-handbook/zephyr-7b-sft-full,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+cognitivecomputations/dolphin-2.2.1-mistral-7b,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+dfurman/Mistral-7B-Instruct-v0.2,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+huangyt/Mistral-7B-v0.1-Open-Platypus_2.5w-r16-gate_up_down,mistralai/Mistral-7B-v0.1,parent named in child,fine-tuned
+l3utterfly/mistral-7b-v0.1-layla-v1,mistralai/Mistral-7B-v0.1,parent named in child,fine-tuned
+mistralai/Mistral-7B-Instruct-v0.1,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+openchat/openchat-3.5-1210,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+qblocks/mistral_7b_DolphinCoder,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+spmurrayzzz/Mistral-Syndicate-7B,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+teknium/CollectiveCognition-v1-Mistral-7B,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+teknium/Mistral-Trismegistus-7B,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+teknium/OpenHermes-2.5-Mistral-7B,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+upaya07/Birbal-7B-V1,mistralai/Mistral-7B-v0.1,hub base_model,fine-tuned
+Brillibits/Instruct_Mixtral-8x7B-v0.1_Dolly15K,mistralai/Mixtral-8x7B-v0.1,parent named in child,fine-tuned
+Open-Orca/Mixtral-SlimOrca-8x7B,mistralai/Mixtral-8x7B-v0.1,hub base_model,fine-tuned
+udkai/Turdus,mlabonne/NeuralMarcoro14-7B,hub base_model,fine-tuned
+one-man-army/una-neural-chat-v3-3-P2-OMA,one-man-army/una-neural-chat-v3-3-P1-OMA,hub base_model,fine-tuned
+Aspik101/StableBeluga-13B-instruct-PL-lora_unload,stabilityai/StableBeluga-13B,parent named in child,fine-tuned
+bn22/OpenHermes-2.5-Mistral-7B-MISALIGNED,teknium/OpenHermes-2.5-Mistral-7B,parent named in child,fine-tuned
+charlesdedampierre/TopicNeuralHermes-2.5-Mistral-7B,teknium/OpenHermes-2.5-Mistral-7B,hub base_model,fine-tuned
+mlabonne/NeuralHermes-2.5-Mistral-7B,teknium/OpenHermes-2.5-Mistral-7B,hub base_model,fine-tuned
+openaccess-ai-collective/DPOpenHermes-7B,teknium/OpenHermes-2.5-Mistral-7B,hub base_model,fine-tuned
+qblocks/falcon_7b_DolphinCoder,tiiuae/falcon-7b,hub base_model,fine-tuned
+decapoda-research/Antares-11b-v1,upstage/SOLAR-10.7B-Instruct-v1.0,hub base_model,fine-tuned
+fblgit/UNA-SOLAR-10.7B-Instruct-v1.0,upstage/SOLAR-10.7B-Instruct-v1.0,parent named in child,fine-tuned
+NousResearch/Nous-Hermes-2-SOLAR-10.7B,upstage/SOLAR-10.7B-v1.0,hub base_model,fine-tuned
+sr5434/CodegebraGPT-10b,upstage/SOLAR-10.7B-v1.0,hub base_model,fine-tuned
+upstage/SOLAR-10.7B-Instruct-v1.0,upstage/SOLAR-10.7B-v1.0,hub base_model,fine-tuned
+DevaMalla/llama_7b_lora,DevaMalla/llama7b,hub base_model,related
+DevaMalla/llama_7b_qlora_pds-eval,DevaMalla/llama7b,hub base_model,related
+Mihaiii/Metis-0.1,HuggingFaceH4/mistral-7b-sft-beta,hub base_model,related
+PulsarAI/OpenHermes-2.5-neural-chat-v3-3-Slerp,Intel/neural-chat-7b-v3-3,hub base_model,related
+Mihaiii/Pallas-0.5-LASER-0.3,Mihaiii/Pallas-0.5-LASER-0.2,hub base_model,related
+Mihaiii/Pallas-0.5-LASER-0.5,Mihaiii/Pallas-0.5-LASER-0.4,hub base_model,related
+Mihaiii/Pallas-0.5-LASER-0.6,Mihaiii/Pallas-0.5-LASER-0.5,hub base_model,related
+totally-not-an-llm/EverythingLM-13b-V3-peft,NousResearch/Llama-2-13b-hf,hub base_model,related
+TheBloke/OpenOrca-Platypus2-13B-GPTQ,Open-Orca/OpenOrca-Platypus2-13B,hub base_model,related
+superlazycoder/NeuralPipe-7B-slerp,OpenPipe/mistral-ft-optimized-1218,hub base_model,related
+Q-bert/MetaMath-Cybertron-Starling,Q-bert/MetaMath-Cybertron,hub base_model,related
+Weyaxi/OpenHermes-2.5-neural-chat-v3-3-openchat-3.5-1210-Slerp,Weyaxi/OpenHermes-2.5-neural-chat-v3-3-Slerp,hub base_model,related
+Q-bert/MetaMath-Cybertron-Starling,berkeley-nest/Starling-LM-7B-alpha,hub base_model,related
+Q-bert/MetaMath-Cybertron,fblgit/una-cybertron-7b-v2-bf16,hub base_model,related
+Q-bert/MetaMath-Cybertron,meta-math/MetaMath-Mistral-7B,hub base_model,related
+Mihaiii/Pallas-0.4,migtissera/Tess-34B-v1.4,hub base_model,related
+Mihaiii/Pallas-0.5,migtissera/Tess-34B-v1.4,hub base_model,related
+osanseviero/mistral-instruct-frankenmerge,mistralai/Mistral-7B-Instruct-v0.1,hub base_model,related
+Mihaiii/Metis-0.3,mistralai/Mistral-7B-Instruct-v0.2,hub base_model,related
+osanseviero/mistral-instruct-frankenmerge,mistralai/Mistral-7B-Instruct-v0.2,hub base_model,related
+CallComply/zephyr-7b-beta-128k,mistralai/Mistral-7B-v0.1,hub base_model,related
+chargoddard/mistral-11b-slimorca,mistralai/Mistral-7B-v0.1,hub base_model,related
+mlabonne/NeuralMarcoro14-7B,mlabonne/Marcoro14-7B-slerp,hub base_model,related
+superlazycoder/NeuralPipe-7B-slerp,mlabonne/NeuralHermes-2.5-Mistral-7B,hub base_model,related
+Weyaxi/OpenHermes-2.5-neural-chat-v3-3-openchat-3.5-1210-Slerp,openchat/openchat-3.5-1210,hub base_model,related
+PulsarAI/OpenHermes-2.5-neural-chat-v3-3-Slerp,teknium/OpenHermes-2.5-Mistral-7B,hub base_model,related
+CallComply/SOLAR-10.7B-Instruct-v1.0-128k,upstage/SOLAR-10.7B-v1.0,hub base_model,related
+HyperbeeAI/Tulpar-7b-v1,HyperbeeAI/Tulpar-7b-v0,"same org, later version",version step
+Mihaiii/Metis-0.3,Mihaiii/Metis-0.1,"same org, later version",version step
+Mihaiii/Pallas-0.4,Mihaiii/Pallas-0.2,"same org, later version",version step
+Undi95/ReMM-v2.2-L2-13B,Undi95/ReMM-v2.1-L2-13B,"same org, later version",version step
+jeonsworld/CarbonVillain-en-10.7B-v3,jeonsworld/CarbonVillain-en-10.7B-v1,"same org, later version",version step
+jondurbin/airoboros-c34b-2.2.1,jondurbin/airoboros-c34b-2.1,"same org, later version",version step
+perlthoughts/Chupacabra-7B-v2.03,perlthoughts/Chupacabra-7B-v2,"same org, later version",version step

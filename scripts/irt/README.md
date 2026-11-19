@@ -109,9 +109,52 @@ Implementation details that matter when interpreting results:
   splits, then bootstrap paired split means. Negative delta MAE means improvement. Five
   overlapping family splits provide limited evidence; these CIs describe split variability.
 
-This implementation stops at V-optimal MIRT. It adds no token-cost selection, cross-benchmark
-pool, task-holdout prediction or fine-tuning delta analysis. The data still needs a complete
-0/1 matrix; the team's future NaN-containing MMLU-Pro matrix needs separate handling.
+This progression stops at V-optimal MIRT. It adds no token-cost selection, cross-benchmark
+pool or task-holdout prediction. Its loaders still expect the complete efficbench matrix.
+
+## Parent and fine-tuned child pairs
+
+`run_pairs.py` asks whether IRT measures the score change between a model and its parent. It
+reads the store from `scripts/matrix/build_tables.py` (the matrix, `items.parquet`,
+`models.parquet`) and the leaderboard's `contents.parquet`, which labels fine-tuned models.
+
+```bash
+uv run --group irt --group matrix python scripts/irt/run_pairs.py --data DATA
+# Quick integration check, not results:
+uv run --group irt --group matrix python scripts/irt/run_pairs.py --data DATA --smoke
+```
+
+- **Pairs** come from `parent_model`. Siblings agreeing on 99% or more of items count once.
+- **Folds** hold out whole lineages: item parameters never see a tested model's family.
+- **Truth** is the child's full-benchmark score minus the parent's, on items both answered.
+
+| Method | How the change is estimated from k child answers |
+|---|---|
+| `random + paired` | mean answer difference on random items (the baseline to beat) |
+| `random + IRT score gap` | child p-IRT score minus the parent's full score |
+| `V-optimal + IRT score gap` | the same, with adaptive V-optimal items; conformal intervals from other folds' pairs |
+| `random + parent model` | child modelled from the parent (`cabench.pairs`) |
+| `random + corrected parent model` | the same, with a cross-fitted bias correction and intervals |
+
+Outputs go to `results/irt/pairs/<benchmark>/`: `summary.csv`, `paired.csv` (against the paired
+baseline), `heldout_losses.csv` (does the frozen item model need extra terms?), `checks.csv`
+(the pass criteria at the top of `run_pairs.py`), `predictions.csv`, `pairs.csv` and
+`protocol.csv`. Own fine-tuned runs need `parent_model` filled in by `build_tables.py` first.
+
+`efficbench_pairs.py` runs the same protocol on real pairs already in the efficbench MMLU matrix,
+using the links and evidence in `efficbench_lineage.csv`. `efficbench_parents.py` first adds
+parents missing from that matrix, about 740 MB of public leaderboard details, and checks them
+against models already in it. Results go to `results/irt/pairs/efficbench_mmlu_extended/`, or
+`efficbench_mmlu/` without the added parents.
+
+```bash
+uv run --group matrix python -I scripts/irt/efficbench_parents.py
+uv run --group irt python scripts/irt/efficbench_pairs.py
+```
+
+`fit_speed.py` times gradient-descent and Bayesian IRT fits and scores them on held-out answers
+(`results/irt/bayesian/fit_speed.csv`). `plot_pairs.py` draws presentation figures for the pair
+results and that timing into `results/figures/`, following `design.md`.
 
 ## Use a teammate's fitted model
 
@@ -144,9 +187,10 @@ ctx["infer"] = teammate_infer
 from cabench.design import model_context
 
 ctx = model_context(
-    train_theta, item_loadings,
+    train_theta,
+    item_loadings,
     predict=teammate_predict,  # predict(theta, items=None) -> probabilities (models, items)
-    infer=teammate_infer,     # infer(responses, items, initial=None) -> theta (models, D)
+    infer=teammate_infer,  # infer(responses, items, initial=None) -> theta (models, D)
     embeddings=item_embeddings,  # optional; required only for the anchor selector
     item_ids=item_ids,
 )
