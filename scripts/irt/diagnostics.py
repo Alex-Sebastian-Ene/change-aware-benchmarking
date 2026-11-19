@@ -56,7 +56,8 @@ def response_diagnostics(Y, ctx, seed=0):
     actual = Y[:, hidden].ravel()
     rows = []
     for name, p in predictions.items():
-        p = np.clip(p.ravel(), 1e-8, 1 - 1e-8)
+        # float64 first: in float32, 1 - 1e-8 rounds to 1 and log1p(-p) is -inf
+        p = np.clip(np.asarray(p, dtype=float).ravel(), 1e-8, 1 - 1e-8)
         bins = np.minimum((10 * p).astype(int), 9)
         ece = sum(abs((p[bins == b] - actual[bins == b]).sum()) / len(p) for b in range(10))
         rows.append(

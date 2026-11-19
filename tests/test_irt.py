@@ -5,6 +5,7 @@ pytest.importorskip("torch")  # needs the irt dependency group: uv run --group i
 
 from cabench.irt import (  # noqa: E402
     fit_mirt,
+    fit_mirt_bayes,
     fit_theta,
     gp_estimate,
     gp_weight,
@@ -13,12 +14,24 @@ from cabench.irt import (  # noqa: E402
 )
 
 
-def test_mirt_recovers_simulated_model():
+def test_fit_mirt_skips_missing_answers():
+    rng = np.random.default_rng(0)
+    th, al, be = rng.normal(size=(200, 1)), rng.normal(1, 0.3, (500, 1)), rng.normal(size=500)
+    P = predict_proba(th, al, be)
+    Y = (rng.random(P.shape) < P).astype(np.float32)
+    Y[rng.random(Y.shape) < 0.2] = np.nan
+    t, a, b, history = fit_mirt(Y, n_dims=1, epochs=500)
+    assert np.isfinite(history[-1])
+    assert np.corrcoef(predict_proba(t, a, b).ravel(), P.ravel())[0, 1] > 0.9
+
+
+@pytest.mark.parametrize("fit", [fit_mirt, fit_mirt_bayes])
+def test_mirt_recovers_simulated_model(fit):
     rng = np.random.default_rng(0)
     th, al, be = rng.normal(size=(300, 2)), rng.normal(size=(2000, 2)), rng.normal(size=2000)
     P = predict_proba(th, al, be)
     Y = (rng.random(P.shape) < P).astype(np.float32)
-    t, a, b, _ = fit_mirt(Y, n_dims=2, epochs=1500)
+    t, a, b, _ = fit(Y, n_dims=2, epochs=1500)
     assert np.corrcoef(predict_proba(t, a, b).ravel(), P.ravel())[0, 1] > 0.9
 
     # held-out models, half their items observed: does fit_theta recover their scores?

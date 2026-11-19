@@ -3,7 +3,8 @@
 Core objective 3. Owners: A. Vijaykrishnan, A. Chitnis.
 
 Multidimensional 2PL IRT: P(Y_mi = 1) = sigmoid(theta_m . alpha_i - beta_i), fitted by
-L2-regularised maximum likelihood (not the hierarchical Bayesian VI used by tinyBenchmarks).
+L2-regularised maximum likelihood (fit_mirt, the baseline) or hierarchical Bayesian
+variational inference as in tinyBenchmarks (fit_mirt_bayes).
 Selectors: IRT anchors, 1D Fisher, and MIRT V-optimality (static and adaptive).
 Score estimators: anchor-weighted accuracy, p-IRT and gp-IRT.
 """
@@ -25,12 +26,14 @@ from cabench.design import voptimal_static as voptimal_static
 
 
 def fit_mirt(Y, n_dims=2, epochs=2000, lr=0.05, l2=1e-3, seed=0):
-    """Fit on a complete 0/1 matrix Y (models x items).
+    """Fit on a 0/1 matrix Y (models x items). NaN means no response and is skipped.
 
     Returns theta (M, D), alpha (Q, D), beta (Q,) and the training loss per epoch.
     """
     Y = torch.as_tensor(Y, dtype=torch.float32)
-    assert not torch.isnan(Y).any(), "fit_mirt expects a complete matrix"
+    observed = ~torch.isnan(Y)
+    Y = torch.nan_to_num(Y)
+    scale = Y.numel() / observed.sum()  # exactly 1 on a complete matrix: baseline unchanged
     torch.manual_seed(seed)
     n_models, n_items = Y.shape
     theta = (torch.randn(n_models, n_dims) * 0.1).requires_grad_()
@@ -41,12 +44,62 @@ def fit_mirt(Y, n_dims=2, epochs=2000, lr=0.05, l2=1e-3, seed=0):
     history = []
     for _ in range(epochs):
         opt.zero_grad()
-        nll = F.binary_cross_entropy_with_logits(theta @ alpha.T - beta, Y)
+        logits = theta @ alpha.T - beta
+        nll = scale * F.binary_cross_entropy_with_logits(logits, Y, weight=observed.float())
         reg = l2 * (theta.pow(2).mean() + alpha.pow(2).mean() + beta.pow(2).mean())
         (nll + reg).backward()
         opt.step()
         history.append(nll.item())
     return theta.detach().numpy(), alpha.detach().numpy(), beta.detach().numpy(), history
+
+
+def fit_mirt_bayes(Y, n_dims=2, epochs=2000, lr=0.05, seed=0):
+    """Hierarchical Bayesian MIRT fitted by variational inference (tinyBenchmarks / py-irt).
+
+    theta_m ~ N(0, I), alpha_id ~ N(mu_d, s_d^2), beta_i ~ N(mu_b, s_b^2). The prior means
+    and scales are learned with the posterior (empirical Bayes, where py-irt puts
+    hyperpriors on them). q is a mean-field Gaussian; one reparameterised sample per step.
+    Same return as fit_mirt: posterior means, and the negative ELBO per answer per epoch.
+    """
+    Y = torch.as_tensor(Y, dtype=torch.float32)
+    assert not torch.isnan(Y).any(), "fit_mirt_bayes expects a complete matrix"
+    torch.manual_seed(seed)
+    n_models, n_items = Y.shape
+
+    def gaussian(*shape, scale=0.1):
+        mean = (torch.randn(*shape) * scale).requires_grad_()
+        return mean, torch.full(shape, -2.0, requires_grad=True)  # log std
+
+    theta, alpha, beta = gaussian(n_models, n_dims), gaussian(n_items, n_dims), gaussian(n_items)
+    hyper = torch.zeros(2, n_dims + 1, requires_grad=True)  # prior mean, log std: alphas, beta
+    params = [*theta, *alpha, *beta, hyper]
+    opt = torch.optim.Adam(params, lr=lr)
+
+    def kl(q, mu, log_s):
+        """KL(N(m, e^log_sq) || N(mu, e^log_s)), summed."""
+        m, log_sq = q
+        ratio = (torch.exp(2 * log_sq) + (m - mu) ** 2) / (2 * torch.exp(2 * log_s))
+        return (log_s - log_sq + ratio - 0.5).sum()
+
+    def sample(q):
+        return q[0] + torch.exp(q[1]) * torch.randn_like(q[0])
+
+    zeros = torch.zeros(n_dims)
+    history = []
+    for _ in range(epochs):
+        opt.zero_grad()
+        logits = sample(theta) @ sample(alpha).T - sample(beta)
+        nll = F.binary_cross_entropy_with_logits(logits, Y, reduction="sum")
+        prior = (
+            kl(theta, zeros, zeros)
+            + kl(alpha, hyper[0, :-1], hyper[1, :-1])
+            + kl(beta, hyper[0, -1], hyper[1, -1])
+        )
+        loss = (nll + prior) / Y.numel()
+        loss.backward()
+        opt.step()
+        history.append(loss.item())
+    return theta[0].detach().numpy(), alpha[0].detach().numpy(), beta[0].detach().numpy(), history
 
 
 def fit_theta(Y_obs, mask, alpha, beta, theta_prior, steps=500, lr=0.05):

@@ -39,15 +39,15 @@ def make_splits(Y):
     return [split_models(len(Y), s, groups=families) for s in SPLIT_SEEDS]
 
 
-def fit_context(Y_train, subjects, n_dims=N_DIMS, item_ids=None, **fit_kwargs):
+def fit_context(Y_train, subjects, n_dims=N_DIMS, item_ids=None, fit=fit_mirt, **fit_kwargs):
     """Fit IRT on the train models and bundle what selectors and estimators may use."""
-    theta, alpha, beta, history = fit_mirt(Y_train, n_dims=n_dims, **fit_kwargs)
+    theta, alpha, beta, history = fit(Y_train, n_dims=n_dims, **fit_kwargs)
     return {
         **parameter_context(theta, alpha, beta, subjects=subjects, item_ids=item_ids),
         "history": history,
         "emb": StandardScaler().fit_transform(np.column_stack([alpha, beta])),
         "subjects": subjects,
-        "item_mean": Y_train.mean(0),
+        "item_mean": np.nanmean(Y_train, axis=0),
     }
 
 
