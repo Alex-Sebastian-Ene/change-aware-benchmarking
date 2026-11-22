@@ -68,6 +68,8 @@ def draw_line(ax, x, y, spec):
 
 def correlation_by_method(title):
     table = pd.read_csv(OUT / "methods.csv")
+    if "split_type" in table:  # this chart is the family splits; older runs had only those
+        table = table[table["split_type"] == "family"]
     ks = sorted(table["k"].unique())
     fig, (left, right) = plt.subplots(1, 2, figsize=(13, 6.2), dpi=200, facecolor=SURFACE)
 

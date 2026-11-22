@@ -1,12 +1,14 @@
 """Random-subset baselines on the MMLU matrix, with the checks that validate them.
 
-Run from the repository root (~15 min on a laptop CPU), after scripts/irt/efficbench.py:
+Run from the repository root (~20 min on a laptop CPU), after scripts/irt/efficbench.py:
 
     uv run python scripts/baselines/run_baselines.py
 
 Part 1 uses every model: uniform and subject-stratified subsets against the closed forms.
-Part 2 compares the selection methods on held-out models, on the same 5 family splits as
-scripts/irt, so what difficulty and anchors learn never comes from the models they score.
+Part 2 compares the selection methods on held-out models, so what difficulty and anchors
+learn never comes from the models they score. The splits come from cabench.splits.all_splits:
+the same 5 family splits as scripts/irt, plus the stronger and weaker splits. MMLU has no
+model sizes, so the size splits are not run here.
 
 Writes results/baselines/{uniform,stratified,analytic_ratio,methods,checks}.csv and
 run_info.json. Seeds are fixed; results/ is git-ignored.
@@ -20,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from cabench import baselines as b
-from cabench.splits import behaviour_families, split_models
+from cabench.splits import FAMILY_DIST, all_splits, behaviour_families, duplicate_groups
 
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = ROOT / "data/processed/efficbench_mmlu"
@@ -32,8 +34,7 @@ SEED = 0
 N_REP = 1000  # part 1: all models
 N_REP_HELD_OUT = 200  # part 2: per split and method
 N_REP_CALIBRATED = 50
-SPLIT_SEEDS = range(5)
-FAMILY_DIST = 0.3  # as in scripts/irt/run_experiment.py
+SPLIT_SEEDS = range(5)  # family splits; FAMILY_DIST is shared with scripts/irt via cabench
 
 checks = []
 
@@ -228,27 +229,46 @@ def spearman(errors, by):
 
 
 def held_out_splits(M):
-    families = behaviour_families(M.to_numpy(dtype=float), FAMILY_DIST)
+    """(split_type, seed, calibration, held_out) model positions for every split run here.
+
+    Family: calibrate on train and score val + test, all unseen families (no method tunes
+    on val), for each of SPLIT_SEEDS. Stronger / weaker: calibrate on train + val and score
+    test only, so the scored models are exactly the shifted ones. Their test part doesn't
+    depend on the seed, and with val in calibration neither does the rest, so one seed.
+    The first split given is family seed 0.
+    """
+    Y = M.to_numpy(dtype=float)
     for seed in SPLIT_SEEDS:
-        train, val, test = split_models(len(M), seed, groups=families)
-        held_out = np.concatenate([val, test])
-        yield seed, train, held_out, set(families[train]) & set(families[held_out])
+        for split_type, (train, val, test) in all_splits(Y, seed).items():
+            if split_type == "family":
+                yield split_type, seed, train, np.concatenate([val, test])
+            elif seed == SPLIT_SEEDS[0]:
+                yield split_type, seed, np.concatenate([train, val]), test
 
 
 def compare_methods(M, subjects):
     print("Held-out comparison")
+    Y = M.to_numpy(dtype=float)
+    families, duplicates = behaviour_families(Y, FAMILY_DIST), duplicate_groups(Y)
     all_errors, spearmans, calibrated = [], [], []
-    leaks = 0
-    for seed, train, held_out, shared in held_out_splits(M):
-        leaks += len(shared) + len(set(train) & set(held_out))
+    leaks = n_splits = 0
+    for split_type, seed, train, held_out in held_out_splits(M):
+        n_splits += 1
+        leaks += len(set(train) & set(held_out))
+        leaks += len(set(duplicates[train]) & set(duplicates[held_out]))
+        if split_type == "family":
+            leaks += len(set(families[train]) & set(families[held_out]))
         calib, held = M.iloc[train], M.iloc[held_out]
-        print(f"  split {seed}: {len(calib)} calibration, {len(held)} held-out", flush=True)
+        print(
+            f"  {split_type} split {seed}: {len(calib)} calibration, {len(held)} held-out",
+            flush=True,
+        )
         for method in METHODS:
             errors = b.subset_errors(
                 held, method, KS, N_REP_HELD_OUT, seed, M_calib=calib, subtasks=subjects
-            ).assign(split=seed)
+            ).assign(split_type=split_type, split=seed)
             all_errors.append(errors)
-            rho = spearman(errors, ["method", "split", "k", "rep"])
+            rho = spearman(errors, ["split_type", "method", "split", "k", "rep"])
             spearmans.append(rho.rename("spearman").reset_index())
             print(f"    {method} done", flush=True)
 
@@ -259,13 +279,25 @@ def compare_methods(M, subjects):
                 items = b.sample_items(M.columns, k, rng)
                 err = b.calibrated_scores(calib, held, items) - full
                 calibrated.append(
-                    pd.DataFrame({"method": "calibrated", "k": k, "err": err.to_numpy()})
+                    pd.DataFrame(
+                        {
+                            "split_type": split_type,
+                            "method": "calibrated",
+                            "k": k,
+                            "err": err.to_numpy(),
+                        }
+                    )
                 )
-    check("no model or family on both sides of a split", leaks == 0, f"{leaks} overlaps, 5 splits")
+    check(
+        "no model, near-duplicate or family (family splits) on both sides of a split",
+        leaks == 0,
+        f"{leaks} overlaps, {n_splits} splits",
+    )
 
+    by = ["split_type", "method", "k"]
     errors = pd.concat(all_errors, ignore_index=True)
     rho = pd.concat(spearmans, ignore_index=True)
-    grouped = rho.groupby(["method", "k"])["spearman"]
+    grouped = rho.groupby(by)["spearman"]
     table = pd.DataFrame(
         {
             "spearman": grouped.mean(),
@@ -274,23 +306,49 @@ def compare_methods(M, subjects):
             "n_subsets": grouped.count(),
         }
     )
-    summary = b.summarise_errors(errors, by=["method", "k"])
-    calibrated = b.summarise_errors(pd.concat(calibrated, ignore_index=True), by=["method", "k"])
+    summary = b.summarise_errors(errors, by=by)
+    calibrated = b.summarise_errors(pd.concat(calibrated, ignore_index=True), by=by)
     table = pd.concat([table.join(summary), calibrated]).sort_index()
     return table
 
 
 def check_methods(table):
+    """Checks per split type. Correlations are compared only within a split type: the
+    stronger and weaker test models sit in a narrow score band, so theirs are lower.
+
+    Correlation should rise with k once it is averaged over several subsets. Anchors pick
+    one fixed subset per split, so on a split type with a single split (stronger, weaker)
+    one unlucky set shows directly: those dips are reported, not checked.
+
+    Returns:
+        {"correlation_dips_not_checked": [...]}, for run_info.json.
+    """
     rho = table["spearman"].unstack("method").drop(columns="calibrated")
-    climbing = (rho.diff().iloc[1:] > -0.01).all(axis=None)
-    check("correlation rises with k for every method", climbing, "never falls by more than 0.01")
-    biggest = table.groupby("method")["bias"].apply(lambda s: s.abs().max())
-    random_methods = biggest[["uniform", "subtask", "difficulty", "systematic"]]
+    falls = rho.groupby(level="split_type").diff() < -0.01
+    several = table["n_subsets"].unstack("method").drop(columns="calibrated") > 1
+
+    def listed(mask):
+        return [f"{s} {m} at k={k}" for s, k, m in mask.stack().loc[lambda x: x].index]
+
+    failed, dips = listed(falls & several), listed(falls & ~several)
     check(
-        "held-out random methods are unbiased",
-        random_methods.max() < 0.01,
-        f"largest |bias| {random_methods.max():.4f}; anchors {biggest['anchors']:.4f}",
+        "correlation rises with k for every method averaged over several subsets",
+        not failed,
+        "never falls by more than 0.01" if not failed else "falls: " + ", ".join(failed),
     )
+    if dips:
+        print(f"  [NOTE] one fixed subset per split, so not checked; dips: {', '.join(dips)}")
+    biggest = table["bias"].abs().groupby(level=["split_type", "method"]).max().unstack("method")
+    random_methods = biggest[["uniform", "subtask", "difficulty", "systematic"]].max(axis=1)
+    check(
+        "held-out random methods are unbiased in every split type",
+        random_methods.max() < 0.01,
+        "largest |bias| "
+        + ", ".join(f"{s} {v:.4f}" for s, v in random_methods.items())
+        + "; anchors "
+        + ", ".join(f"{s} {v:.4f}" for s, v in biggest["anchors"].items()),
+    )
+    return {"correlation_dips_not_checked": dips}
 
 
 def check_anchors(M):
@@ -300,7 +358,7 @@ def check_anchors(M):
     calibration models: that keeps every question's difficulty but destroys the shared
     answer patterns the clusters are built from.
     """
-    _, train, held_out, _ = next(held_out_splits(M))
+    _, _, train, held_out = next(held_out_splits(M))  # family split, seed 0
     calib, held = M.iloc[train], M.iloc[held_out]
     full = b.full_scores(held)
     rng = np.random.default_rng(SEED)
@@ -368,7 +426,7 @@ def main():
     check_bootstrap(M)
 
     table = compare_methods(M, subjects)
-    check_methods(table)
+    method_notes = check_methods(table)
     table.to_csv(OUT / "methods.csv")
     anchor_checks = check_anchors(M)
 
@@ -381,11 +439,14 @@ def main():
         "n_rep_held_out": N_REP_HELD_OUT,
         "split_seeds": list(SPLIT_SEEDS),
         "family_dist": FAMILY_DIST,
+        "split_types": sorted(table.index.unique("split_type")),
+        "shift_split_seeds": [SPLIT_SEEDS[0]],
         "matrix": M.shape,
         "python": platform.python_version(),
         "numpy": np.__version__,
         "pandas": pd.__version__,
         **anchor_checks,
+        **method_notes,
     }
     (OUT / "run_info.json").write_text(json.dumps(info, indent=2))
     print(f"\n{results['passed'].sum()} of {len(results)} checks passed; wrote {OUT}")
