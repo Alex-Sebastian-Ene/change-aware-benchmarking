@@ -167,8 +167,9 @@ uv run --group matrix python scripts/matrix/build_tables.py --data DATA --raw RA
 | `models.parquet` | One row per `(model_id, model_revision)`: `family`, `params_b` and `parent_model` come from the leaderboard summary dataset `open-llm-leaderboard/contents` for public models. `checkpoint_step` and `split` are left empty. |
 | `matrices/<benchmark>__<config_id>.parquet` | Rows are `model_id@model_revision` and columns are `item_id` in items-table order. Values are `1.0`, `0.0` or `NaN`. `NaN` means there was no response and is never 0. |
 
-For each model and config, the earliest run is canonical. Later runs are
-repeats that serve as a noise reference, and they do not become matrix rows.
+For each model and config, the earliest run (by `timestamp`) is canonical.
+Later runs are repeats that serve as a noise reference, and they do not
+become matrix rows.
 
 The script exits with an error in any of these cases:
 
@@ -258,6 +259,7 @@ Converts an lm-eval `--log_samples` file (`samples_<task>_<timestamp>.jsonl`)
 into long-table rows and items-table rows.
 
 ```python
+from datetime import datetime
 from utils.ingest import read_samples
 from utils.schema import LONG, ITEMS, conform
 
@@ -266,6 +268,7 @@ long_df, items_df = read_samples(
     task="leaderboard_mmlu_pro", benchmark="leaderboard_mmlu_pro", benchmark_version="1.0",
     run_id="own_...", source="own", model_id="org/name", model_revision="<sha>",
     config_id=cid, harness_commit="<lm-eval sha>", metric="acc",
+    timestamp=datetime.fromisoformat(manifest["runtime"]["utc_time"]),
     count_tokens=lambda s: len(tok(s, add_special_tokens=False)["input_ids"]),
 )
 table = conform(long_df, LONG, "long")
@@ -275,9 +278,18 @@ table = conform(long_df, LONG, "long")
   `GEN_METRICS` (`exact_match`, `prompt_level_strict_acc`) marks the task as
   generative: `logprob` is null, `pred` is the generated text, and
   `gen_tokens` is counted. Otherwise the task is treated as log-likelihood.
+- `timestamp` is required and must have a timezone. Pass the time of the run,
+  for example `runtime.utc_time` from the run's `manifest.json`, not the time
+  of ingest: the earliest run becomes the matrix row, so the wrong time can
+  change which run is used.
 - Each benchmark needs an extractor in `EXTRACTORS`, mapping `doc` to
-  `(question, choices, answer_key, subtask)`. Only MMLU-Pro has one so far.
-  Check the `doc` fields at the pinned harness commit before you add others.
+  `(question, choices, answer_key, subtask, source_index)`. `source_index` is
+  the item's index in the dataset (`question_id` for MMLU-Pro). Only MMLU-Pro
+  has one so far. Check the `doc` fields at the pinned harness commit before
+  you add others.
+- Questions with the same text and options get the same `item_id`. As in
+  `ingest_public.py`, only the one with the lowest `source_index` is kept, so
+  a run has one row per item.
 - If you leave out `count_tokens`, `prompt_tokens` is null and `gen_tokens`
   is 0.
 

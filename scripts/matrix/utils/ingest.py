@@ -8,21 +8,24 @@ Each benchmark stores its question and choices under different `doc` fields,
 so the content used for the item ID is pulled by a small per-task extractor.
 MMLU-Pro is filled in as the worked example; the rest are TODO and must be
 checked against the doc fields at the pinned harness commit before use.
+
+Identical questions get the same item ID. As in ingest_public.py, only the one
+with the lowest source index is kept, so public and own runs keep the same copy.
 """
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import pandas as pd
 
 from .item_id import make_item_id
 from .schema import SCHEMA_VERSION
 
-# task -> fn(doc) -> (question, choices, answer_key, subtask)
-Extractor = Callable[[dict], tuple[str, list[str], str, str]]
+# task -> fn(doc) -> (question, choices, answer_key, subtask, source_index)
+Extractor = Callable[[dict], tuple[str, list[str], str, str, int]]
 
 
 def _mmlu_pro(doc: dict):
@@ -31,9 +34,11 @@ def _mmlu_pro(doc: dict):
         doc (dict): The sample's "doc" entry.
 
     Returns:
-        tuple[str, list[str], str, str]: (question, choices, answer_key, subtask).
+        tuple[str, list[str], str, str, int]: (question, choices, answer_key, subtask,
+        source_index). source_index is the dataset's question_id, as in ingest_public.py.
     """
-    return doc["question"], list(doc["options"]), str(doc["answer"]), doc.get("category", "")
+    return (doc["question"], list(doc["options"]), str(doc["answer"]), doc.get("category", ""),
+            int(doc["question_id"]))
 
 
 EXTRACTORS: dict[str, Extractor] = {
@@ -73,8 +78,8 @@ def read_samples(
     config_id: str,
     harness_commit: str,
     metric: str,
+    timestamp: datetime,
     count_tokens: Callable[[str], int] | None = None,
-    timestamp: datetime | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Args:
@@ -90,24 +95,29 @@ def read_samples(
         harness_commit (str): lm-eval commit hash.
         metric (str): Metric key giving `correct`; a GEN_METRICS entry marks the
             task as generative (no logprob, pred is the generated text).
+        timestamp (datetime): When the run happened, with a timezone, e.g.
+            datetime.fromisoformat(manifest["runtime"]["utc_time"]). The earliest run of
+            a model and config becomes its matrix row, so this must be the run's time,
+            not the time of ingest.
         count_tokens (Callable[[str], int] | None): Tokeniser-based counter for
             prompt_tokens and gen_tokens; if None, prompt_tokens is null and
             gen_tokens is 0.
-        timestamp (datetime | None): Timestamp for every row; defaults to now (UTC).
 
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame]: (long rows, one per sample;
-        item rows, de-duplicated on item_id).
+        tuple[pd.DataFrame, pd.DataFrame]: (long rows, one per distinct item;
+        item rows, one per distinct item). Of identical questions, the one with the
+        lowest source index is kept.
     """
     if task not in EXTRACTORS:
         raise NotImplementedError(f"no extractor for {task}; add one to EXTRACTORS")
+    if timestamp.tzinfo is None:
+        raise ValueError("timestamp needs a timezone, e.g. the manifest's runtime.utc_time")
     extract = EXTRACTORS[task]
-    ts = timestamp or datetime.now(timezone.utc)
-    long_rows, item_rows = [], []
+    long_rows, item_rows, source_indices = [], [], []
 
     for line in Path(path).read_text().splitlines():
         rec = json.loads(line)
-        q, choices, answer, subtask = extract(rec["doc"])
+        q, choices, answer, subtask, source_index = extract(rec["doc"])
         iid = make_item_id(benchmark, benchmark_version, q, choices)
         generative = metric in GEN_METRICS
 
@@ -129,10 +139,15 @@ def read_samples(
             config_id=config_id, harness_commit=harness_commit,
             correct=_score(rec, metric), logprob=logprob, pred=pred,
             prompt_tokens=count_tokens(prompt) if (count_tokens and prompt) else None,
-            gen_tokens=gen_tokens, timestamp=ts, schema_version=SCHEMA_VERSION))
+            gen_tokens=gen_tokens, timestamp=timestamp, schema_version=SCHEMA_VERSION))
         item_rows.append(dict(
             item_id=iid, benchmark=benchmark, benchmark_version=benchmark_version,
-            subtask=subtask, source_index=str(rec["doc_id"]), answer_key=answer,
+            subtask=subtask, source_index=str(source_index), answer_key=answer,
             ref_prompt_tokens=None))
+        source_indices.append(source_index)
 
-    return pd.DataFrame(long_rows), pd.DataFrame(item_rows).drop_duplicates("item_id")
+    # lowest source index first, keep the first of each item_id, then back to file order
+    keep = pd.Series(source_indices).sort_values(kind="stable").index
+    long_df = pd.DataFrame(long_rows).loc[keep].drop_duplicates("item_id").sort_index()
+    items_df = pd.DataFrame(item_rows).loc[keep].drop_duplicates("item_id").sort_index()
+    return long_df.reset_index(drop=True), items_df.reset_index(drop=True)
