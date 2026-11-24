@@ -175,6 +175,9 @@ def test_matrix_config_id_matches_pins(tmp_path):
         ({}, {"max_gen_toks": 256, "parser_version": "v1"}, "stop"),
         ({}, {"template_path": "t.jinja"}, "template_sha256"),
         ({}, {"typo_field": 1}, "typo_field"),
+        ({"backend": "vLLM"}, {}, "backend"),
+        ({"backend": "hf"}, {}, "transformers_version"),
+        ({"backend": "hf", "transformers_version": 5.2}, {}, "transformers_version"),
     ],
 )
 def test_bad_config_is_refused(tmp_path, harness_edit, task_edit, match):
@@ -313,3 +316,21 @@ def test_model_args_uses_sha_not_branch():
     args = run.build_model_args(MODEL, HARNESS).split(",")
     assert f"revision={SHA}" in args
     assert f"tokenizer_revision={SHA}" in args
+
+
+def test_model_args_hf_has_no_tokenizer_revision():
+    # HFLM has no tokenizer_revision argument; it loads the tokenizer at `revision`
+    hf = HarnessPin(**{**HARNESS.__dict__, "backend": "hf", "transformers_version": "5.0.0"})
+    args = run.build_model_args(MODEL, hf).split(",")
+    assert args == ["pretrained=org/model", f"revision={SHA}", "dtype=bfloat16"]
+
+
+def test_hf_config_loads(tmp_path):
+    raw = {**RAW, "harness": {**RAW["harness"], "backend": "hf", "transformers_version": "5.0.0"}}
+    cfg = load_config(write_config(tmp_path, raw))
+    assert cfg.harness.backend == "hf"
+
+
+def test_backend_defaults_to_vllm(tmp_path):
+    # configs written before the backend field existed keep their meaning
+    assert load_config(write_config(tmp_path)).harness.backend == "vllm"

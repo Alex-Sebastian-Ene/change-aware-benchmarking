@@ -18,6 +18,7 @@ HASH_SUFFIX = re.compile(rf"-[0-9a-f]{{{ID_LEN}}}$")  # "-c5af5974dcec" in mmlu_
 SHA1_HEX = re.compile(r"[0-9a-f]{40}")  # a git / HF Hub commit
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 EXACT_VERSION = re.compile(r"\d+(\.\d+)+\S*")  # 0.6.3, 0.6.3.post1; not a range or placeholder
+BACKENDS = ("vllm", "hf")  # lm-eval model types a config may use
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,9 @@ class HarnessPin:
     apply_chat_template: bool = False  # base models; instruct = open question
     lockfile_sha256: str = ""
     apptainer_digest: str = ""  # sha256 of the .sif
+    # lm-eval model type. "hf" = HF transformers, as the Open LLM Leaderboard ran.
+    backend: str = "vllm"
+    transformers_version: str | None = None  # required when backend is "hf"
 
 
 @dataclass(frozen=True)
@@ -124,6 +128,13 @@ def _check_fields(pin, rules: dict, where: str = "") -> None:
 
 def _validate(harness: HarnessPin, tasks: tuple[TaskPin, ...]) -> None:
     _check_fields(harness, HARNESS_RULES)
+    if harness.backend not in BACKENDS:
+        raise ConfigError(f"backend must be one of {BACKENDS}, got {harness.backend!r}")
+    if harness.backend == "hf" and not _matches(EXACT_VERSION)(harness.transformers_version):
+        raise ConfigError(
+            'backend "hf" needs transformers_version as an exact version string, '
+            f"got {harness.transformers_version!r}"
+        )
     if not tasks:
         raise ConfigError("config has no tasks")
     for t in tasks:

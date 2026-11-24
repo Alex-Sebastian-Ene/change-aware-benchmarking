@@ -25,3 +25,4 @@ results/
 
 # Secrets
 .env
+*.log

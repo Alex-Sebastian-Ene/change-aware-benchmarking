@@ -41,6 +41,13 @@ def _norm_url(url: str) -> str:
     return url.strip().removesuffix("/").removesuffix(".git").lower()
 
 
+def _installed(package: str) -> str | None:
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return None
+
+
 def verify_harness(pin: HarnessPin, lm_eval_dir: Path, lockfile: Path, sif: Path) -> None:
     """Check code, packages and container all match `pin`."""
     if not pin.lockfile_sha256:
@@ -64,11 +71,10 @@ def verify_harness(pin: HarnessPin, lm_eval_dir: Path, lockfile: Path, sif: Path
             f"lm_eval is imported from {imported_from}, not the pinned checkout {lm_eval_dir}"
         )
 
-    try:
-        installed_vllm = version("vllm")
-    except PackageNotFoundError:
-        installed_vllm = None
+    installed_vllm = _installed("vllm")
     check("vllm_version", installed_vllm, pin.vllm_version)
+    if pin.backend == "hf":
+        check("transformers_version", _installed("transformers"), pin.transformers_version)
 
     check("lockfile_sha256", sha256_file(lockfile), pin.lockfile_sha256)
     check("apptainer_digest", sha256_file(sif), pin.apptainer_digest)

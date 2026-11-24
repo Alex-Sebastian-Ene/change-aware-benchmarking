@@ -1,14 +1,21 @@
 # Response Matrix
 
 Utilities for turning per-question LLM evaluation results into a long response
-table and per-benchmark wide matrices (spec v1). Currently only MMLU-Pro from
-the Open LLM Leaderboard is wired up end to end.
+table and per-benchmark wide matrices (spec v1). MMLU-Pro, MuSR and GPQA are
+wired up end to end, for Open LLM Leaderboard runs and for own runs
+(`ingest_own.py`). The tasks and metric of each benchmark are listed in
+`BENCHMARKS` in `utils/ingest.py`.
+
+GPQA's three leaderboard subsets are three benchmarks, `leaderboard_gpqa_diamond`
+(198 questions), `leaderboard_gpqa_main` (448) and `leaderboard_gpqa_extended`
+(546). They are nested, so combining them would count a question up to three
+times. Download them with `--tasks gpqa`.
 
 ## Pipeline
 
 ```
 download_details.py   Hub details  ->  <raw>/<org>__<name>/*.parquet + manifest.json
-ingest_public.py      one model    ->  <data>/long/leaderboard_mmlu_pro/<run_id>.parquet
+ingest_public.py      one model    ->  <data>/long/<benchmark>/<run_id>.parquet
 build_tables.py       long table   ->  <data>/items.parquet, models.parquet, matrices/*.parquet
 ```
 
@@ -109,7 +116,9 @@ It writes:
 
 - one Parquet file per task config, named `<org>__<name>__<task>.parquet`;
 - a `manifest.json` that records, for each config, the split it used and every
-  split that exists. `ingest_public.py` needs this file.
+  split that exists. `ingest_public.py` needs this file. Entries from earlier
+  downloads are kept, so you can download one task at a time. If an older version
+  of the script dropped an entry, rerunning it for that task restores the entry.
 
 The script uses the `latest` split when there is one, and otherwise the newest
 timestamped split. It skips files that already exist, so you can rerun it
@@ -118,30 +127,40 @@ prints the columns and first row of one file so you can check them.
 
 ### `ingest_public.py`
 
-Converts one model's MMLU-Pro download into a long-table file.
+Converts one model's download into one long-table file per benchmark. A
+benchmark made of several tasks (MuSR's three subtasks) goes into one file.
 
 ```bash
-uv run --group matrix python scripts/matrix/ingest_public.py MODEL_DIR --data DATA
+uv run --group matrix python scripts/matrix/ingest_public.py MODEL_DIR --data DATA \
+    [--benchmark leaderboard_mmlu_pro leaderboard_musr leaderboard_gpqa_diamond ...]
 ```
 
-| Argument   | Meaning |
-|------------|---------|
-| `MODEL_DIR`| One model's folder from `download_details.py`. |
-| `--data`   | Parquet store root. Output goes to `<data>/long/leaderboard_mmlu_pro/<run_id>.parquet`. |
+| Argument      | Meaning |
+|---------------|---------|
+| `MODEL_DIR`   | One model's folder from `download_details.py`. |
+| `--data`      | Parquet store root. Output goes to `<data>/long/<benchmark>/<run_id>.parquet`. |
+| `--benchmark` | Keys of `BENCHMARKS` to ingest (default `leaderboard_mmlu_pro`). Each needs its task files downloaded. |
 
 What it does:
 
 - Fetches the run's `results_<timestamp>.json` from the Hub and caches it in
   `MODEL_DIR`. That file supplies `benchmark_version`, `model_revision` and
   `harness_commit`.
-- Computes `item_id` from the question and options. See `scripts/matrix/utils/item_id.py`.
-- Sets `correct` from the leaderboard's `acc`, and `logprob` from the
-  log-likelihood of the gold option. Sets `pred` to the letter of the option
-  with the highest log-likelihood.
+- Reads each task's rows with `read_records` from `utils/ingest.py`, the same
+  code `ingest_own.py` uses, so public and own rows of an item get the same
+  `item_id` (see `scripts/matrix/utils/item_id.py`) and are scored the same way.
+- Sets `correct` from the benchmark's metric (`acc` for MMLU-Pro, `acc_norm` for
+  MuSR and GPQA), and `logprob` from the log-likelihood of the gold option. Sets
+  `pred` to the letter of the option that metric picks: the highest
+  log-likelihood for `acc`, the highest per character of the scored string for
+  `acc_norm` (GPQA scores the labels `(A)` to `(D)`, see `SCORED_CHOICES`).
+- Refuses tasks of one benchmark that come from different leaderboard runs or
+  report different versions.
 - Loads the model's tokenizer at that revision to count `prompt_tokens`.
   `gen_tokens` is 0, because this is a log-likelihood task.
 - Removes duplicate questions, meaning items whose question and options are
-  identical. It keeps the one with the lowest `question_id`.
+  identical. It keeps the one with the lowest source index (`question_id` for
+  MMLU-Pro, the row's `doc_id` for MuSR and GPQA).
 
 The `run_id` is `public_<org>__<name>_<timestamp>`. `config_id` is currently
 the placeholder `openllm_v2_public`. It matches no config file, so the schema
@@ -167,14 +186,15 @@ uv run --group matrix python scripts/matrix/build_tables.py --data DATA --raw RA
 | `models.parquet` | One row per `(model_id, model_revision)`: `family`, `params_b` and `parent_model` come from the leaderboard summary dataset `open-llm-leaderboard/contents` for public models. `checkpoint_step` and `split` are left empty. |
 | `matrices/<benchmark>__<config_id>.parquet` | Rows are `model_id@model_revision` and columns are `item_id` in items-table order. Values are `1.0`, `0.0` or `NaN`. `NaN` means there was no response and is never 0. |
 
-For each model and config, the earliest run is canonical. Later runs are
-repeats that serve as a noise reference, and they do not become matrix rows.
+For each model and config, the earliest run (by `timestamp`) is canonical.
+Later runs are repeats that serve as a noise reference, and they do not
+become matrix rows.
 
 The script exits with an error in any of these cases:
 
 - a `model_revision` is missing;
-- a benchmark has no items builder (only `leaderboard_mmlu_pro` has one now,
-  in `ITEM_BUILDERS`);
+- a benchmark isn't in `BENCHMARKS` (`utils/ingest.py`), or its task files
+  haven't been downloaded (the items come from the published questions);
 - a long-table `item_id` is not in the items table.
 
 ---
@@ -202,6 +222,14 @@ iid = make_item_id("leaderboard_mmlu_pro", "1.0", question, options)
 `benchmark | benchmark_version | question | choice_1 | ... | choice_n`. Before
 hashing, the question and each choice are normalised: Unicode NFC, whitespace
 collapsed, ends stripped. For free-response items, pass `choices=None`.
+
+The choices are normally in the order shown to the model. GPQA is the
+exception: lm-eval shuffles its answers with a random state that depends on the
+harness run, and the leaderboard details contain up to three shuffles of the
+same diamond and extended questions. So GPQA's extractor orders the choices as
+the gold answer first, then the rest sorted by normalised text. Its
+`answer_key` is always `A`, and `pred` is mapped into that order
+(`CHOICE_ORDER`), so `pred == answer_key` exactly when the answer is correct.
 
 - `item_key(...)` returns the string that gets hashed. It is useful for
   debugging.
@@ -258,6 +286,7 @@ Converts an lm-eval `--log_samples` file (`samples_<task>_<timestamp>.jsonl`)
 into long-table rows and items-table rows.
 
 ```python
+from datetime import datetime
 from utils.ingest import read_samples
 from utils.schema import LONG, ITEMS, conform
 
@@ -266,6 +295,7 @@ long_df, items_df = read_samples(
     task="leaderboard_mmlu_pro", benchmark="leaderboard_mmlu_pro", benchmark_version="1.0",
     run_id="own_...", source="own", model_id="org/name", model_revision="<sha>",
     config_id=cid, harness_commit="<lm-eval sha>", metric="acc",
+    timestamp=datetime.fromisoformat(manifest["runtime"]["utc_time"]),
     count_tokens=lambda s: len(tok(s, add_special_tokens=False)["input_ids"]),
 )
 table = conform(long_df, LONG, "long")
@@ -275,9 +305,22 @@ table = conform(long_df, LONG, "long")
   `GEN_METRICS` (`exact_match`, `prompt_level_strict_acc`) marks the task as
   generative: `logprob` is null, `pred` is the generated text, and
   `gen_tokens` is counted. Otherwise the task is treated as log-likelihood.
+- `timestamp` is required and must have a timezone. Pass the time of the run,
+  for example `runtime.utc_time` from the run's `manifest.json`, not the time
+  of ingest: the earliest run becomes the matrix row, so the wrong time can
+  change which run is used.
 - Each benchmark needs an extractor in `EXTRACTORS`, mapping `doc` to
-  `(question, choices, answer_key, subtask)`. Only MMLU-Pro has one so far.
-  Check the `doc` fields at the pinned harness commit before you add others.
+  `(question, choices, answer_key, subtask, source_index)`. `source_index` is
+  the item's index in the dataset (`question_id` for MMLU-Pro), or None to use
+  the record's `doc_id` (MuSR). `EXTRACTORS` is keyed by lm-eval task name, so
+  MuSR has one per subtask. Check the `doc` fields at the pinned harness commit
+  before you add others, then add the benchmark to `BENCHMARKS`. If its
+  `doc_to_target` is the answer text, add its tasks to `TEXT_TARGET_TASKS` too.
+  If `doc_to_choice` isn't the extractor's choices, add the task to
+  `SCORED_CHOICES` (for `acc_norm`); if the extractor reorders the choices, add
+  it to `CHOICE_ORDER` (for `pred`). GPQA uses both.
+- Questions with the same text and options get the same `item_id`. Only the
+  one with the lowest `source_index` is kept, so a run has one row per item.
 - If you leave out `count_tokens`, `prompt_tokens` is null and `gen_tokens`
   is 0.
 
