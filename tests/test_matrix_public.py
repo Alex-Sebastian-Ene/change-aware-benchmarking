@@ -190,3 +190,61 @@ def test_tasks_from_different_runs_are_refused(raw):
     with pytest.raises(subprocess.CalledProcessError) as e:
         ingest_public(raw, "leaderboard_musr")
     assert "different leaderboard runs" in e.value.stderr
+
+
+# --- GPQA: two leaderboard runs that shuffled the choices differently ---
+
+GPQA = [f"leaderboard_gpqa_{s}" for s in ("diamond", "main", "extended")]
+
+
+def gpqa_row(doc_id, question, shown, gold, lps):
+    r, fr = _resps(lps)
+    best = max(range(4), key=lps.__getitem__)
+    label = f"({'ABCD'[gold]})"
+    return dict(
+        doc_id=doc_id,
+        doc={"Question": question, "Subdomain": "Genetics", "answer": label,
+             **{f"choice{i + 1}": c for i, c in enumerate(shown)}},
+        target=label,
+        arguments={f"gen_args_{i}": {"arg_0": f"prompt {doc_id}", "arg_1": f" ({x})"}
+                   for i, x in enumerate("ABCD")},
+        resps=r, filtered_resps=fr, acc_norm=float(best == gold))
+
+
+def gpqa_model(root: Path, safe: str, shuffled: bool) -> Path:
+    """A download_details.py folder with the three GPQA subsets, in one of two shuffles."""
+    d = root / safe
+    d.mkdir(parents=True)
+    answers = ["gold", "w1", "w2", "w3"]
+    shown = ["w2", "w3", "gold", "w1"] if shuffled else answers
+    gold = shown.index("gold")
+    for t in GPQA:
+        rows = [gpqa_row(i, f"{t} q{i}", shown, gold, [-1.0, -2.0, -3.0, -4.0]) for i in range(2)]
+        pq.write_table(pa.Table.from_pylist(rows), d / f"{safe}__{t}.parquet")
+    (d / "manifest.json").write_text(json.dumps({
+        "model": safe.replace("__", "/"), "repo": f"open-llm-leaderboard/{safe}-details",
+        "configs": {f"{safe}__{t}": {"split_used": "latest", "all_splits": [STAMP, "latest"],
+                                     "rows": 2} for t in GPQA}}))
+    (d / f"results_{STAMP}.json").write_text(json.dumps({
+        "config": {"model_sha": "b" * 40}, "git_hash": "abc123",
+        "versions": {t: 1.0 for t in GPQA}}))
+    return d
+
+
+def test_gpqa_shuffles_line_up_in_one_matrix(raw):
+    first = gpqa_model(raw.parent, "Org__One", shuffled=False)
+    second = gpqa_model(raw.parent, "Org__Two", shuffled=True)
+    for d in (first, second):
+        data = ingest_public(d, *GPQA)
+    bt = build_tables_module()
+
+    for t in GPQA:
+        long = pd.read_parquet(data / "long" / t)
+        items = bt.public_items(raw.parent, t, "1.0")
+        assert len(items) == 2 and items["answer_key"].tolist() == ["A", "A"]
+        wide = bt.build_wide(long, items, t, "openllm_v2_public")
+        assert wide.shape == (2, 2) and not wide.isna().to_numpy().any()
+        # run one picks the gold answer (shown first); run two picks "w2" (shown first)
+        assert wide.to_numpy().tolist() == [[1.0, 1.0], [0.0, 0.0]]
+        by_model = long.groupby("model_id")["pred"].agg(set).to_dict()
+        assert by_model == {"Org/One": {"A"}, "Org/Two": {"C"}}

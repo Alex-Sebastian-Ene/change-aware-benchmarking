@@ -86,7 +86,7 @@ def test_timestamp_needs_a_timezone(tmp_path):
         read(path, timestamp=datetime(2026, 11, 1, 12))
 
 
-@pytest.mark.parametrize("target", [0, "0", "A"])
+@pytest.mark.parametrize("target", [0, "0", "A", "(A)"])
 def test_target_as_index_or_letter(tmp_path, target):
     # MMLU-Pro logs the answer letter as target; other tasks log an index
     long, _ = read(write_samples(tmp_path / "s.jsonl", [(1, "q1", 1)], target=target))
@@ -232,3 +232,67 @@ def test_ingest_own_writes_one_file_per_benchmark(tmp_path):
         f"{MUSR}/own_{'r' * 64}.parquet"
     ]
     assert len(pd.read_parquet(out[0])) == 2
+
+
+# --- GPQA: shuffled choices, "(X)" targets, labels scored, three subsets as benchmarks ---
+
+GPQA = "leaderboard_gpqa_main"
+
+
+def gpqa_rec(doc_id: int, question: str, shown: list[str], gold: int, lps: list[float],
+             subdomain: str = "Organic Chemistry") -> dict:
+    """One lm-eval GPQA sample: choice1..4 in prompt order, target the gold label "(X)"."""
+    label = f"({'ABCD'[gold]})"
+    best = max(range(4), key=lps.__getitem__)  # "(A)".."(D)" have equal length
+    return {
+        "doc_id": doc_id,
+        "doc": {"Question": question, "Subdomain": subdomain, "answer": label,
+                **{f"choice{i + 1}": c for i, c in enumerate(shown)}},
+        "target": label,
+        "resps": [[[str(lp), "False"]] for lp in lps],
+        "acc_norm": float(best == gold),
+    }
+
+
+def read_gpqa(path: Path, recs: list[dict], benchmark: str = GPQA):
+    path.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    return read_samples(
+        path, task=benchmark, benchmark=benchmark, benchmark_version="1.0", run_id="run",
+        source="own", model_id="org/model", model_revision="a" * 40, config_id=CFG,
+        harness_commit="h" * 40, metric="acc_norm", timestamp=T1,
+    )
+
+
+def test_gpqa_item_id_ignores_the_shuffle(tmp_path):
+    # the same question shuffled two ways, as different harness commits do; the model
+    # picks "wrong 2" in the first run and the gold answer in the second
+    a = gpqa_rec(0, "q", ["wrong 2", "gold", "wrong 1", "wrong 3"], 1, [-1.0, -2.0, -3.0, -4.0])
+    b = gpqa_rec(0, "q", ["wrong 3", "wrong 1", "wrong 2", "gold"], 3, [-4.0, -3.0, -2.0, -1.0])
+    long_a, items_a = read_gpqa(tmp_path / "a.jsonl", [a])
+    long_b, items_b = read_gpqa(tmp_path / "b.jsonl", [b])
+
+    assert long_a["item_id"].tolist() == long_b["item_id"].tolist()
+    assert items_a["answer_key"].tolist() == items_b["answer_key"].tolist() == ["A"]
+    assert items_a["subtask"].tolist() == ["Organic Chemistry"]
+    assert long_a["logprob"].tolist() == [-2.0] and long_b["logprob"].tolist() == [-1.0]
+    # choices in item order: gold, wrong 1, wrong 2, wrong 3
+    assert long_a["pred"].tolist() == ["C"] and long_a["correct"].tolist() == [0]
+    assert long_b["pred"].tolist() == ["A"] and long_b["correct"].tolist() == [1]
+    conform(long_a, LONG, "long")
+
+
+def test_gpqa_identical_choice_texts_keep_pred_and_correct_consistent(tmp_path):
+    # the leaderboard's preprocessing can leave all four answers reading the same
+    recs = [gpqa_rec(0, "q", ["ln(2) = "] * 4, 0, [-2.0, -1.0, -3.0, -4.0]),
+            gpqa_rec(1, "q2", ["ln(2) = "] * 4, 0, [-1.0, -2.0, -3.0, -4.0])]
+    long, items = read_gpqa(tmp_path / "s.jsonl", recs)
+    assert long["correct"].tolist() == [0, 1]
+    assert long["pred"].tolist() == ["B", "A"]  # == answer_key "A" exactly when correct
+
+
+def test_gpqa_subsets_are_separate_benchmarks(tmp_path):
+    rec = gpqa_rec(0, "q", ["gold", "w1", "w2", "w3"], 0, [-1.0, -2.0, -3.0, -4.0])
+    main, _ = read_gpqa(tmp_path / "m.jsonl", [rec], "leaderboard_gpqa_main")
+    diamond, _ = read_gpqa(tmp_path / "d.jsonl", [rec], "leaderboard_gpqa_diamond")
+    assert main["item_id"].tolist() != diamond["item_id"].tolist()
+    assert set(main["benchmark"]) == {"leaderboard_gpqa_main"}

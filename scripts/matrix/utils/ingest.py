@@ -11,7 +11,7 @@ acc_norm, exact_match, ...). They differ only in how `arguments` is nested.
 
 Each benchmark stores its question and choices under different `doc` fields,
 so the content used for the item ID is pulled by a small per-task extractor.
-MMLU-Pro and MuSR are filled in; the rest are TODO and must be checked against
+MMLU-Pro, MuSR and GPQA are filled in; the rest are TODO and must be checked against
 the doc fields at the pinned harness commit before use. EXTRACTORS is keyed by
 lm-eval task name (without the _pinned suffix), so a benchmark made of several
 subtasks has one entry per subtask.
@@ -36,7 +36,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .item_id import make_item_id
+from .item_id import make_item_id, normalise
 from .schema import SCHEMA_VERSION
 
 # task -> fn(doc) -> (question, choices, answer_key, subtask, source_index)
@@ -75,10 +75,80 @@ def _musr(doc: dict, subtask: str):
 
 MUSR_SUBTASKS = ("murder_mysteries", "object_placements", "team_allocation")
 
+
+def _gpqa_shown(doc: dict) -> list[str]:
+    """GPQA's four answers in the order the prompt shows them, (A) to (D)."""
+    return [str(doc[f"choice{i}"]) for i in range(1, 5)]
+
+
+def _gpqa_order(doc: dict) -> list[int]:
+    """Prompt positions (0-3) in the order _gpqa returns the choices: gold first, then
+    the others by normalised text, ties by position.
+
+    Positions, not texts, because some answers are identical as shown: the leaderboard's
+    preprocessing deletes "[...]", which leaves e.g. four answers reading "ln(2) = ".
+    """
+    shown = _gpqa_shown(doc)
+    gold = _gold_index(doc["answer"])
+    others = sorted((i for i in range(4) if i != gold), key=lambda i: (normalise(shown[i]), i))
+    return [gold, *others]
+
+
+def _gpqa(doc: dict):
+    """
+    Args:
+        doc (dict): The sample's "doc" entry, after the leaderboard task's process_docs,
+            which shuffles the four answers into choice1..choice4 and sets `answer` to
+            the gold letter in brackets, e.g. "(D)".
+
+    Returns:
+        tuple[str, list[str], str, str, None]: (question, choices, answer_key, subtask,
+        None). The choices are in a fixed order that doesn't depend on the shuffle: the
+        gold answer, then the other three sorted by their normalised text. So the gold
+        is always choice "A", answer_key is "A", and read_records maps pred into this
+        order (see CHOICE_ORDER). subtask is the dataset's Subdomain, e.g. "Organic
+        Chemistry". GPQA's Record ID isn't an integer, so source_index is None and
+        doc_id is used.
+
+    The shuffle can't be part of the item ID, as the spec's "choices in the order shown"
+    would make it: it depends on the harness run, not the question. lm-eval draws it
+    from one random state shared by the GPQA subsets, so it changes with the order the
+    tasks are built in. In the leaderboard details, main has the same shuffle in every
+    run checked, but diamond and extended each have three, one per group of harness
+    commits (d4631ea6; 9694c56; a791d293 and a781a6b). With shown order, one question
+    would become up to three items, and our own runs would match none of them.
+    """
+    shown = _gpqa_shown(doc)
+    return (doc["Question"], [shown[i] for i in _gpqa_order(doc)], "A",
+            doc.get("Subdomain", ""), None)
+
+
+# The leaderboard's three GPQA subsets are nested (diamond 198 < main 448 < extended
+# 546 questions). Each subset is its own benchmark: combined, the same question would
+# count up to three times.
+GPQA_SUBSETS = ("diamond", "main", "extended")
+
 EXTRACTORS: dict[str, Extractor] = {
     "leaderboard_mmlu_pro": _mmlu_pro,
     **{f"leaderboard_musr_{s}": partial(_musr, subtask=s) for s in MUSR_SUBTASKS},
+    **{f"leaderboard_gpqa_{s}": _gpqa for s in GPQA_SUBSETS},
     # TODO: more benchmarks
+}
+
+# For acc_norm, lm-eval divides each log-probability by the length in characters of
+# the choice it scored, i.e. doc_to_choice's string. For most tasks that is the
+# extractor's choices; tasks listed here score other strings, given by doc. GPQA
+# scores the labels "(A)".."(D)", not the answer texts the item ID is built from.
+SCORED_CHOICES: dict[str, Callable[[dict], list[str]]] = {
+    f"leaderboard_gpqa_{s}": (lambda doc: ["(A)", "(B)", "(C)", "(D)"]) for s in GPQA_SUBSETS
+}
+
+# Tasks whose extractor puts the choices in a different order from the prompt. `resps`
+# and `target` follow the prompt's order; the function gives, from doc, the prompt
+# position of each choice in the extractor's order. pred is mapped through it, so that
+# pred == answer_key exactly when the answer is correct.
+CHOICE_ORDER: dict[str, Callable[[dict], list[int]]] = {
+    f"leaderboard_gpqa_{s}": _gpqa_order for s in GPQA_SUBSETS
 }
 
 # Tasks whose doc_to_target is the answer text (MuSR: `answer_choice`), so lm-eval logs
@@ -98,6 +168,8 @@ BENCHMARKS: dict[str, Benchmark] = {
     "leaderboard_mmlu_pro": Benchmark(("leaderboard_mmlu_pro",), "acc"),
     "leaderboard_musr": Benchmark(tuple(f"leaderboard_musr_{s}" for s in MUSR_SUBTASKS),
                                   "acc_norm"),
+    **{f"leaderboard_gpqa_{s}": Benchmark((f"leaderboard_gpqa_{s}",), "acc_norm")
+       for s in GPQA_SUBSETS},
 }
 
 LOGLIK_METRICS = ("acc_norm", "acc")
@@ -108,7 +180,8 @@ def _gold_index(target) -> int:
     """Index of the correct choice from a sample's `target`.
 
     lm-eval logs `target` as doc_to_target returns it: an int for most tasks, but the
-    answer letter ("A"-"J") for MMLU-Pro, whose doc_to_target is the `answer` field.
+    answer letter ("A"-"J") for MMLU-Pro, whose doc_to_target is the `answer` field,
+    and the letter in brackets ("(A)"-"(D)") for GPQA.
     Tasks in TEXT_TARGET_TASKS log the answer text instead and don't come here.
     """
     if isinstance(target, int) and not isinstance(target, bool):
@@ -116,6 +189,8 @@ def _gold_index(target) -> int:
     t = str(target).strip()
     if t.isdigit():
         return int(t)
+    if len(t) == 3 and t[0] == "(" and t[2] == ")":
+        t = t[1]
     if len(t) == 1 and t in LETTERS:
         return LETTERS.index(t)
     raise ValueError(f"can't read target {target!r} as a choice index or letter")
@@ -310,13 +385,17 @@ def read_records(
             logprob = lps[gold]
             # acc_norm compares log-probabilities per character of the choice
             # (lm_eval/api/task.py at the pinned commit), so pred must too, or it
-            # can disagree with `correct`. These are the choices lm-eval scored only
-            # when the extractor returns doc_to_choice's list, as _musr does.
+            # can disagree with `correct`. The strings lm-eval scored are the
+            # extractor's choices (as for _musr) unless the task is in SCORED_CHOICES.
             if metric == "acc_norm":
-                scores = [lp / len(c) for lp, c in zip(lps, choices, strict=True)]
+                scored = SCORED_CHOICES[task](rec["doc"]) if task in SCORED_CHOICES else choices
+                scores = [lp / len(c) for lp, c in zip(lps, scored, strict=True)]
             else:
                 scores = lps
-            pred = LETTERS[max(range(len(scores)), key=scores.__getitem__)]
+            best = max(range(len(scores)), key=scores.__getitem__)
+            if task in CHOICE_ORDER:
+                best = CHOICE_ORDER[task](rec["doc"]).index(best)
+            pred = LETTERS[best]
 
         prompt = _prompt(rec)
         long_rows.append(dict(

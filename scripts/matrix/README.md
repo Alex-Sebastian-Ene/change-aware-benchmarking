@@ -1,10 +1,15 @@
 # Response Matrix
 
 Utilities for turning per-question LLM evaluation results into a long response
-table and per-benchmark wide matrices (spec v1). MMLU-Pro and MuSR are wired
-up end to end, for Open LLM Leaderboard runs and for own runs (`ingest_own.py`).
-The tasks and metric of each benchmark are listed in `BENCHMARKS` in
-`utils/ingest.py`.
+table and per-benchmark wide matrices (spec v1). MMLU-Pro, MuSR and GPQA are
+wired up end to end, for Open LLM Leaderboard runs and for own runs
+(`ingest_own.py`). The tasks and metric of each benchmark are listed in
+`BENCHMARKS` in `utils/ingest.py`.
+
+GPQA's three leaderboard subsets are three benchmarks, `leaderboard_gpqa_diamond`
+(198 questions), `leaderboard_gpqa_main` (448) and `leaderboard_gpqa_extended`
+(546). They are nested, so combining them would count a question up to three
+times. Download them with `--tasks gpqa`.
 
 ## Pipeline
 
@@ -127,7 +132,7 @@ benchmark made of several tasks (MuSR's three subtasks) goes into one file.
 
 ```bash
 uv run --group matrix python scripts/matrix/ingest_public.py MODEL_DIR --data DATA \
-    [--benchmark leaderboard_mmlu_pro leaderboard_musr]
+    [--benchmark leaderboard_mmlu_pro leaderboard_musr leaderboard_gpqa_diamond ...]
 ```
 
 | Argument      | Meaning |
@@ -145,16 +150,17 @@ What it does:
   code `ingest_own.py` uses, so public and own rows of an item get the same
   `item_id` (see `scripts/matrix/utils/item_id.py`) and are scored the same way.
 - Sets `correct` from the benchmark's metric (`acc` for MMLU-Pro, `acc_norm` for
-  MuSR), and `logprob` from the log-likelihood of the gold option. Sets `pred`
-  to the letter of the option that metric picks: the highest log-likelihood for
-  `acc`, the highest per character for `acc_norm`.
+  MuSR and GPQA), and `logprob` from the log-likelihood of the gold option. Sets
+  `pred` to the letter of the option that metric picks: the highest
+  log-likelihood for `acc`, the highest per character of the scored string for
+  `acc_norm` (GPQA scores the labels `(A)` to `(D)`, see `SCORED_CHOICES`).
 - Refuses tasks of one benchmark that come from different leaderboard runs or
   report different versions.
 - Loads the model's tokenizer at that revision to count `prompt_tokens`.
   `gen_tokens` is 0, because this is a log-likelihood task.
 - Removes duplicate questions, meaning items whose question and options are
   identical. It keeps the one with the lowest source index (`question_id` for
-  MMLU-Pro, the row's `doc_id` for MuSR).
+  MMLU-Pro, the row's `doc_id` for MuSR and GPQA).
 
 The `run_id` is `public_<org>__<name>_<timestamp>`. `config_id` is currently
 the placeholder `openllm_v2_public`. It matches no config file, so the schema
@@ -216,6 +222,14 @@ iid = make_item_id("leaderboard_mmlu_pro", "1.0", question, options)
 `benchmark | benchmark_version | question | choice_1 | ... | choice_n`. Before
 hashing, the question and each choice are normalised: Unicode NFC, whitespace
 collapsed, ends stripped. For free-response items, pass `choices=None`.
+
+The choices are normally in the order shown to the model. GPQA is the
+exception: lm-eval shuffles its answers with a random state that depends on the
+harness run, and the leaderboard details contain up to three shuffles of the
+same diamond and extended questions. So GPQA's extractor orders the choices as
+the gold answer first, then the rest sorted by normalised text. Its
+`answer_key` is always `A`, and `pred` is mapped into that order
+(`CHOICE_ORDER`), so `pred == answer_key` exactly when the answer is correct.
 
 - `item_key(...)` returns the string that gets hashed. It is useful for
   debugging.
@@ -302,6 +316,9 @@ table = conform(long_df, LONG, "long")
   MuSR has one per subtask. Check the `doc` fields at the pinned harness commit
   before you add others, then add the benchmark to `BENCHMARKS`. If its
   `doc_to_target` is the answer text, add its tasks to `TEXT_TARGET_TASKS` too.
+  If `doc_to_choice` isn't the extractor's choices, add the task to
+  `SCORED_CHOICES` (for `acc_norm`); if the extractor reorders the choices, add
+  it to `CHOICE_ORDER` (for `pred`). GPQA uses both.
 - Questions with the same text and options get the same `item_id`. Only the
   one with the lowest `source_index` is kept, so a run has one row per item.
 - If you leave out `count_tokens`, `prompt_tokens` is null and `gen_tokens`
